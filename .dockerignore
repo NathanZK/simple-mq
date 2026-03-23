@@ -1,0 +1,13 @@
+.gradle/
+build/
+!build/libs/
+.idea/
+*.iml
+.DS_Store
+.git/
+.gitignore
+README.md
+HELP.md
+docker-compose.yml
+Dockerfile
+Makefile
