@@ -22,13 +22,13 @@ app-restart: app-down app-up
 
 # Development commands
 app-lint:
-	./gradlew ktlintCheck
+	./gradlew ktlintCheck || gradlew ktlintCheck
 
 app-format:
-	./gradlew ktlintFormat
+	./gradlew ktlintFormat || gradlew ktlintFormat
 
 app-test:
-	./gradlew test
+	./gradlew test || gradlew test
 
 # Log commands
 app-logs:

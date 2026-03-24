@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.ArgumentCaptor
@@ -15,9 +17,11 @@ import org.mockito.Mock
 import org.mockito.junit.jupiter.MockitoExtension
 import org.mockito.kotlin.any
 import org.mockito.kotlin.capture
+import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import java.util.Optional
 import java.util.UUID
 
 @ExtendWith(MockitoExtension::class)
@@ -93,5 +97,93 @@ class QueueServiceTest {
         // Then
         verify(queueRepository, times(2)).save(any<Queue>())
         assertNotEquals(response1.queue_id, response2.queue_id)
+    }
+
+    @Test
+    fun `getQueueMetadata should return correct response when queue exists`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val queue =
+            Queue(
+                queueId = queueId,
+                queueName = "orders-queue",
+                queueSize = 5000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 42,
+                parentQueueId = null,
+            )
+
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+
+        // When
+        val response = queueService.getQueueMetadata(queueId.toString())
+
+        // Then
+        verify(queueRepository, times(1)).findById(queueId)
+        assertEquals(queueId, response.queue_id)
+        assertEquals("orders-queue", response.queue_name)
+        assertEquals(5000, response.queue_size)
+        assertEquals(30, response.visibility_timeout)
+        assertEquals(5, response.max_deliveries)
+        assertEquals(42, response.current_message_count)
+        assertNull(response.dlq_id)
+    }
+
+    @Test
+    fun `getQueueMetadata should return correct response when queue has DLQ`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val dlqId = UUID.randomUUID()
+        val queue =
+            Queue(
+                queueId = queueId,
+                queueName = "orders-queue",
+                queueSize = 5000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 42,
+                parentQueueId = dlqId,
+            )
+
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+
+        // When
+        val response = queueService.getQueueMetadata(queueId.toString())
+
+        // Then
+        verify(queueRepository, times(1)).findById(queueId)
+        assertEquals(dlqId, response.dlq_id)
+    }
+
+    @Test
+    fun `getQueueMetadata should throw IllegalArgumentException when queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.empty())
+
+        // When & Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.getQueueMetadata(queueId.toString())
+            }
+
+        assertEquals("Queue not found with ID: $queueId", exception.message)
+        verify(queueRepository, times(1)).findById(queueId)
+    }
+
+    @Test
+    fun `getQueueMetadata should throw IllegalArgumentException for invalid UUID format`() {
+        // Given
+        val invalidQueueId = "invalid-uuid-format"
+
+        // When & Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.getQueueMetadata(invalidQueueId)
+            }
+
+        assertTrue(exception.message!!.contains("Invalid UUID"))
+        verify(queueRepository, never()).findById(any())
     }
 }
