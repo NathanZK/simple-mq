@@ -26,4 +26,16 @@ class GlobalExceptionHandler {
                 ),
             )
     }
+
+    @ExceptionHandler(IllegalStateException::class)
+    fun handleIllegalStateException(ex: IllegalStateException): ResponseEntity<Map<String, String>> {
+        return ResponseEntity
+            .status(HttpStatus.TOO_MANY_REQUESTS)
+            .body(
+                mapOf(
+                    "error" to (ex.message ?: "Queue error"),
+                    "timestamp" to Date().toString(),
+                ),
+            )
+    }
 }

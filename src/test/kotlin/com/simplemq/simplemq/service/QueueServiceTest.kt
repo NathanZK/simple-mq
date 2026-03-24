@@ -1,7 +1,10 @@
 package com.simplemq.simplemq.service
 
 import com.simplemq.simplemq.dto.CreateQueueRequest
+import com.simplemq.simplemq.dto.EnqueueMessageRequest
+import com.simplemq.simplemq.entity.Message
 import com.simplemq.simplemq.entity.Queue
+import com.simplemq.simplemq.repository.MessageRepository
 import com.simplemq.simplemq.repository.QueueRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -28,6 +31,9 @@ import java.util.UUID
 class QueueServiceTest {
     @Mock
     private lateinit var queueRepository: QueueRepository
+
+    @Mock
+    private lateinit var messageRepository: MessageRepository
 
     @InjectMocks
     private lateinit var queueService: QueueService
@@ -185,5 +191,84 @@ class QueueServiceTest {
 
         assertTrue(exception.message!!.contains("Invalid UUID"))
         verify(queueRepository, never()).findById(any())
+    }
+
+    @Test
+    fun `enqueueMessage should save message with generated ID and return response`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val queue =
+            Queue(
+                queueId = queueId,
+                queueName = "test-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 0,
+            )
+        val request = EnqueueMessageRequest(data = "test message data")
+
+        // When
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+        whenever(messageRepository.save(any<Message>())).thenAnswer { invocation ->
+            invocation.getArgument<Message>(0)
+        }
+
+        val response = queueService.enqueueMessage(queueId.toString(), request)
+
+        // Then
+        verify(queueRepository, times(1)).findById(queueId)
+        verify(messageRepository, times(1)).save(any<Message>())
+        assertNotNull(response.message_id)
+    }
+
+    @Test
+    fun `enqueueMessage should throw IllegalStateException when queue is full`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val queue =
+            Queue(
+                queueId = queueId,
+                queueName = "test-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 1000,
+            )
+
+        val request = EnqueueMessageRequest(data = "test message")
+
+        // When
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+
+        // Then
+        val exception =
+            assertThrows(IllegalStateException::class.java) {
+                queueService.enqueueMessage(queueId.toString(), request)
+            }
+
+        assertEquals("Queue is full (capacity: 1000, current: 1000)", exception.message)
+        verify(queueRepository, times(1)).findById(queueId)
+        verify(messageRepository, never()).save(any())
+    }
+
+    @Test
+    fun `enqueueMessage should throw IllegalArgumentException when queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val request = EnqueueMessageRequest(data = "test message")
+
+        // When
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.empty())
+
+        // Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.enqueueMessage(queueId.toString(), request)
+            }
+
+        assertEquals("Queue not found with ID: $queueId", exception.message)
+        verify(queueRepository, times(1)).findById(queueId)
+        verify(messageRepository, never()).save(any())
     }
 }

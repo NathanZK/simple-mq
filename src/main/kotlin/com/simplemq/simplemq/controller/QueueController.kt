@@ -2,6 +2,8 @@ package com.simplemq.simplemq.controller
 
 import com.simplemq.simplemq.dto.CreateQueueRequest
 import com.simplemq.simplemq.dto.CreateQueueResponse
+import com.simplemq.simplemq.dto.EnqueueMessageRequest
+import com.simplemq.simplemq.dto.EnqueueMessageResponse
 import com.simplemq.simplemq.dto.GetQueueMetadataResponse
 import com.simplemq.simplemq.service.QueueService
 import jakarta.validation.Valid
@@ -33,5 +35,14 @@ class QueueController(
     ): ResponseEntity<GetQueueMetadataResponse> {
         val response = queueService.getQueueMetadata(queue_id)
         return ResponseEntity.ok(response)
+    }
+
+    @PostMapping("/{queue_id}/messages")
+    fun enqueueMessage(
+        @PathVariable queue_id: String,
+        @Valid @RequestBody request: EnqueueMessageRequest,
+    ): ResponseEntity<EnqueueMessageResponse> {
+        val response = queueService.enqueueMessage(queue_id, request)
+        return ResponseEntity.status(HttpStatus.CREATED).body(response)
     }
 }
