@@ -2,10 +2,13 @@ package com.simplemq.simplemq.controller
 
 import com.simplemq.simplemq.dto.CreateQueueRequest
 import com.simplemq.simplemq.dto.CreateQueueResponse
+import com.simplemq.simplemq.dto.GetQueueMetadataResponse
 import com.simplemq.simplemq.service.QueueService
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -22,5 +25,13 @@ class QueueController(
     ): ResponseEntity<CreateQueueResponse> {
         val response = queueService.createQueue(request)
         return ResponseEntity.status(HttpStatus.CREATED).body(response)
+    }
+
+    @GetMapping("/{queue_id}")
+    fun getQueueMetadata(
+        @PathVariable queue_id: String,
+    ): ResponseEntity<GetQueueMetadataResponse> {
+        val response = queueService.getQueueMetadata(queue_id)
+        return ResponseEntity.ok(response)
     }
 }

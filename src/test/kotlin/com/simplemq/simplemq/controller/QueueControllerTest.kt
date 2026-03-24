@@ -3,6 +3,7 @@ package com.simplemq.simplemq.controller
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.simplemq.simplemq.dto.CreateQueueRequest
 import com.simplemq.simplemq.dto.CreateQueueResponse
+import com.simplemq.simplemq.dto.GetQueueMetadataResponse
 import com.simplemq.simplemq.service.QueueService
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -17,6 +18,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
@@ -140,5 +142,104 @@ class QueueControllerTest {
         assertFalse(result.contains("\"queueSize\""))
         assertFalse(result.contains("\"visibilityTimeout\""))
         assertFalse(result.contains("\"maxDeliveries\""))
+    }
+
+    @Test
+    fun `getQueueMetadata should return 200 OK with correct response format`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val expectedResponse =
+            GetQueueMetadataResponse(
+                queue_id = queueId,
+                queue_name = "orders-queue",
+                queue_size = 5000,
+                visibility_timeout = 30,
+                max_deliveries = 5,
+                current_message_count = 42,
+                dlq_id = null,
+            )
+
+        whenever(queueService.getQueueMetadata(queueId.toString())).thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.queue_id").value(queueId.toString()))
+            .andExpect(jsonPath("$.queue_name").value("orders-queue"))
+            .andExpect(jsonPath("$.queue_size").value(5000))
+            .andExpect(jsonPath("$.visibility_timeout").value(30))
+            .andExpect(jsonPath("$.max_deliveries").value(5))
+            .andExpect(jsonPath("$.current_message_count").value(42))
+            .andExpect(jsonPath("$.dlq_id").isEmpty())
+
+        verify(queueService, times(1)).getQueueMetadata(queueId.toString())
+    }
+
+    @Test
+    fun `getQueueMetadata should return 200 OK with DLQ ID when present`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val dlqId = UUID.randomUUID()
+        val expectedResponse =
+            GetQueueMetadataResponse(
+                queue_id = queueId,
+                queue_name = "orders-queue",
+                queue_size = 5000,
+                visibility_timeout = 30,
+                max_deliveries = 5,
+                current_message_count = 42,
+                dlq_id = dlqId,
+            )
+
+        whenever(queueService.getQueueMetadata(queueId.toString())).thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.queue_id").value(queueId.toString()))
+            .andExpect(jsonPath("$.dlq_id").value(dlqId.toString()))
+
+        verify(queueService, times(1)).getQueueMetadata(queueId.toString())
+    }
+
+    @Test
+    fun `getQueueMetadata should return 404 Not Found when queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        whenever(queueService.getQueueMetadata(queueId.toString()))
+            .thenThrow(IllegalArgumentException("Queue not found with ID: $queueId"))
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isNotFound())
+
+        verify(queueService, times(1)).getQueueMetadata(queueId.toString())
+    }
+
+    @Test
+    fun `getQueueMetadata should return 400 Bad Request for invalid UUID format`() {
+        // Given
+        val invalidQueueId = "invalid-uuid-format"
+        whenever(queueService.getQueueMetadata(invalidQueueId))
+            .thenThrow(IllegalArgumentException("Invalid UUID format"))
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}", invalidQueueId)
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isBadRequest())
+
+        verify(queueService, times(1)).getQueueMetadata(invalidQueueId)
     }
 }
