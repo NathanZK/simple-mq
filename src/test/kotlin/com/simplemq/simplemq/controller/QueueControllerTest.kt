@@ -3,6 +3,8 @@ package com.simplemq.simplemq.controller
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.simplemq.simplemq.dto.CreateQueueRequest
 import com.simplemq.simplemq.dto.CreateQueueResponse
+import com.simplemq.simplemq.dto.EnqueueMessageRequest
+import com.simplemq.simplemq.dto.EnqueueMessageResponse
 import com.simplemq.simplemq.dto.GetQueueMetadataResponse
 import com.simplemq.simplemq.service.QueueService
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -241,5 +243,85 @@ class QueueControllerTest {
             .andExpect(status().isBadRequest())
 
         verify(queueService, times(1)).getQueueMetadata(invalidQueueId)
+    }
+
+    @Test
+    fun `enqueueMessage should return 201 Created with correct response format`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val request = EnqueueMessageRequest(data = "test message data")
+        val expectedMessageId = UUID.randomUUID()
+        val expectedResponse = EnqueueMessageResponse(expectedMessageId)
+
+        whenever(queueService.enqueueMessage(queueId.toString(), request)).thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)),
+        )
+            .andExpect(status().isCreated())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.message_id").value(expectedMessageId.toString()))
+
+        verify(queueService, times(1)).enqueueMessage(queueId.toString(), request)
+    }
+
+    @Test
+    fun `enqueueMessage should return 400 Bad Request for invalid data`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val invalidRequest = EnqueueMessageRequest(data = "")
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(invalidRequest)),
+        )
+            .andExpect(status().isBadRequest())
+
+        verify(queueService, never()).enqueueMessage(any(), any())
+    }
+
+    @Test
+    fun `enqueueMessage should return 429 Too Many Requests when queue is full`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val request = EnqueueMessageRequest(data = "test message")
+
+        whenever(queueService.enqueueMessage(queueId.toString(), request))
+            .thenThrow(IllegalStateException("Queue is full (capacity: 1000, current: 1000)"))
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)),
+        )
+            .andExpect(status().isTooManyRequests())
+
+        verify(queueService, times(1)).enqueueMessage(queueId.toString(), request)
+    }
+
+    @Test
+    fun `enqueueMessage should return 404 Not Found when queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val request = EnqueueMessageRequest(data = "test message")
+
+        whenever(queueService.enqueueMessage(queueId.toString(), request))
+            .thenThrow(IllegalArgumentException("Queue not found with ID: $queueId"))
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)),
+        )
+            .andExpect(status().isNotFound())
+
+        verify(queueService, times(1)).enqueueMessage(queueId.toString(), request)
     }
 }
