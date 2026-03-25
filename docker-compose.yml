@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16
@@ -19,7 +17,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   app:
-    image: simple-mq
+    image: nathanzk/simple-mq:latest
     container_name: simple-mq-app
     ports:
       - "8080:8080"

@@ -39,3 +39,17 @@ out/
 
 ### Kotlin ###
 .kotlin
+
+### Terraform ###
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.lock.hcl
+.terraform.lock.hcl
+
+### SSH Keys ###
+.ssh/
+*.pem
+id_rsa
+id_rsa.pub
