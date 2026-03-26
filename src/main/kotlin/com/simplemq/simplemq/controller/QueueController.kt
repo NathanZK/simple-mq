@@ -2,6 +2,7 @@ package com.simplemq.simplemq.controller
 
 import com.simplemq.simplemq.dto.CreateQueueRequest
 import com.simplemq.simplemq.dto.CreateQueueResponse
+import com.simplemq.simplemq.dto.DequeueMessageResponse
 import com.simplemq.simplemq.dto.EnqueueMessageRequest
 import com.simplemq.simplemq.dto.EnqueueMessageResponse
 import com.simplemq.simplemq.dto.GetQueueMetadataResponse
@@ -44,5 +45,13 @@ class QueueController(
     ): ResponseEntity<EnqueueMessageResponse> {
         val response = queueService.enqueueMessage(queue_id, request)
         return ResponseEntity.status(HttpStatus.CREATED).body(response)
+    }
+
+    @GetMapping("/{queue_id}/messages")
+    fun dequeueMessage(
+        @PathVariable queue_id: String,
+    ): ResponseEntity<DequeueMessageResponse> {
+        val response = queueService.dequeueMessage(queue_id)
+        return ResponseEntity.ok(response)
     }
 }

@@ -2,10 +2,46 @@ package com.simplemq.simplemq.repository
 
 import com.simplemq.simplemq.entity.Message
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
+import org.springframework.data.jpa.repository.Query
+import org.springframework.data.repository.query.Param
 import org.springframework.stereotype.Repository
+import java.time.LocalDateTime
 import java.util.UUID
 
 @Repository
 interface MessageRepository : JpaRepository<Message, UUID> {
     fun findByQueueId(queueId: UUID): List<Message>
+
+    @Query(
+        "SELECT m FROM Message m WHERE m.queueId = :queueId AND m.deliveryCount >= :maxDeliveries AND m.visibleAt <= :now",
+    )
+    fun findExhaustedMessages(
+        @Param("queueId") queueId: UUID,
+        @Param("maxDeliveries") maxDeliveries: Int,
+        @Param("now") now: LocalDateTime,
+    ): List<Message>
+
+    @Query(
+        value =
+            "SELECT * FROM messages WHERE queue_id = CAST(:queueId AS uuid) " +
+                "AND visible_at <= :now AND delivery_count < :maxDeliveries " +
+                "ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
+        nativeQuery = true,
+    )
+    fun findAndLockNextAvailableMessage(
+        @Param("queueId") queueId: UUID,
+        @Param("maxDeliveries") maxDeliveries: Int,
+        @Param("now") now: LocalDateTime,
+    ): Message?
+
+    @Modifying
+    @Query(
+        "UPDATE Message m SET m.deliveryCount = :deliveryCount, m.visibleAt = :visibleAt WHERE m.messageId = :messageId",
+    )
+    fun updateMessageDelivery(
+        @Param("messageId") messageId: UUID,
+        @Param("deliveryCount") deliveryCount: Int,
+        @Param("visibleAt") visibleAt: LocalDateTime,
+    )
 }

@@ -22,7 +22,7 @@ data class Queue(
     @Column(name = "max_deliveries", nullable = false)
     val maxDeliveries: Int,
     @Column(name = "current_message_count", nullable = false)
-    val currentMessageCount: Int = 0,
+    var currentMessageCount: Int = 0,
     @Column(name = "parent_queue_id")
     val parentQueueId: UUID? = null,
     @Column(name = "created_at", nullable = false)

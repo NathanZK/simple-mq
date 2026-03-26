@@ -6,4 +6,6 @@ import org.springframework.stereotype.Repository
 import java.util.UUID
 
 @Repository
-interface QueueRepository : JpaRepository<Queue, UUID>
+interface QueueRepository : JpaRepository<Queue, UUID> {
+    fun findByParentQueueId(parentQueueId: UUID): List<Queue>
+}
