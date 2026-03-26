@@ -3,6 +3,8 @@ package com.simplemq.simplemq.controller
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.simplemq.simplemq.dto.CreateQueueRequest
 import com.simplemq.simplemq.dto.CreateQueueResponse
+import com.simplemq.simplemq.dto.DequeueMessageResponse
+import com.simplemq.simplemq.dto.DequeuedMessage
 import com.simplemq.simplemq.dto.EnqueueMessageRequest
 import com.simplemq.simplemq.dto.EnqueueMessageResponse
 import com.simplemq.simplemq.dto.GetQueueMetadataResponse
@@ -25,6 +27,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import java.time.LocalDateTime
 import java.util.UUID
 
 @WebMvcTest(QueueController::class)
@@ -323,5 +326,244 @@ class QueueControllerTest {
             .andExpect(status().isNotFound())
 
         verify(queueService, times(1)).enqueueMessage(queueId.toString(), request)
+    }
+
+    @Test
+    fun `dequeueMessage should return 200 OK with message when message is available`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+        val visibleUntil = LocalDateTime.now().plusSeconds(30)
+        val expectedResponse =
+            DequeueMessageResponse(
+                message =
+                    DequeuedMessage(
+                        message_id = messageId,
+                        data = "test message data",
+                        visible_until = visibleUntil,
+                    ),
+            )
+
+        whenever(queueService.dequeueMessage(queueId.toString())).thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.message.message_id").value(messageId.toString()))
+            .andExpect(jsonPath("$.message.data").value("test message data"))
+            .andExpect(jsonPath("$.message.visible_until").exists())
+
+        verify(queueService, times(1)).dequeueMessage(queueId.toString())
+    }
+
+    @Test
+    fun `dequeueMessage should return 200 OK with null message when queue is empty`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val expectedResponse = DequeueMessageResponse(message = null)
+
+        whenever(queueService.dequeueMessage(queueId.toString())).thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.message").isEmpty())
+
+        verify(queueService, times(1)).dequeueMessage(queueId.toString())
+    }
+
+    @Test
+    fun `dequeueMessage should return 404 Not Found when queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        whenever(queueService.dequeueMessage(queueId.toString()))
+            .thenThrow(IllegalArgumentException("Queue not found with ID: $queueId"))
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isNotFound())
+
+        verify(queueService, times(1)).dequeueMessage(queueId.toString())
+    }
+
+    @Test
+    fun `dequeueMessage should return 400 Bad Request for invalid UUID format`() {
+        // Given
+        val invalidQueueId = "invalid-uuid-format"
+        whenever(queueService.dequeueMessage(invalidQueueId))
+            .thenThrow(IllegalArgumentException("Invalid UUID format"))
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages", invalidQueueId)
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isBadRequest())
+
+        verify(queueService, times(1)).dequeueMessage(invalidQueueId)
+    }
+
+    @Test
+    fun `dequeueMessage should return correct JSON structure when message is available`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+        val visibleUntil = LocalDateTime.now().plusSeconds(45)
+        val expectedResponse =
+            DequeueMessageResponse(
+                message =
+                    DequeuedMessage(
+                        message_id = messageId,
+                        data = "important order data",
+                        visible_until = visibleUntil,
+                    ),
+            )
+
+        whenever(queueService.dequeueMessage(queueId.toString())).thenReturn(expectedResponse)
+
+        // When & Then
+        val result =
+            mockMvc.perform(
+                get("/api/queues/{queue_id}/messages", queueId.toString())
+                    .contentType(MediaType.APPLICATION_JSON),
+            )
+                .andReturn().response.contentAsString
+
+        // Verify JSON structure
+        assertTrue(result.contains("\"message\""))
+        assertTrue(result.contains("\"message_id\""))
+        assertTrue(result.contains("\"data\""))
+        assertTrue(result.contains("\"visible_until\""))
+        assertTrue(result.contains(messageId.toString()))
+        assertTrue(result.contains("important order data"))
+
+        verify(queueService, times(1)).dequeueMessage(queueId.toString())
+    }
+
+    @Test
+    fun `dequeueMessage should return correct JSON structure when queue is empty`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val expectedResponse = DequeueMessageResponse(message = null)
+
+        whenever(queueService.dequeueMessage(queueId.toString())).thenReturn(expectedResponse)
+
+        // When & Then
+        val result =
+            mockMvc.perform(
+                get("/api/queues/{queue_id}/messages", queueId.toString())
+                    .contentType(MediaType.APPLICATION_JSON),
+            )
+                .andReturn().response.contentAsString
+
+        // Verify JSON structure
+        assertTrue(result.contains("\"message\":null"))
+        assertFalse(result.contains("\"message_id\""))
+        assertFalse(result.contains("\"data\""))
+        assertFalse(result.contains("\"visible_until\""))
+
+        verify(queueService, times(1)).dequeueMessage(queueId.toString())
+    }
+
+    @Test
+    fun `dequeueMessage should handle message with special characters`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+        val messageData = "Message with special chars: \"quotes\", \n newlines, \t tabs, and emojis 🚀"
+        val visibleUntil = LocalDateTime.now().plusSeconds(60)
+        val expectedResponse =
+            DequeueMessageResponse(
+                message =
+                    DequeuedMessage(
+                        message_id = messageId,
+                        data = messageData,
+                        visible_until = visibleUntil,
+                    ),
+            )
+
+        whenever(queueService.dequeueMessage(queueId.toString())).thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.message.message_id").value(messageId.toString()))
+            .andExpect(jsonPath("$.message.data").value(messageData))
+            .andExpect(jsonPath("$.message.visible_until").exists())
+
+        verify(queueService, times(1)).dequeueMessage(queueId.toString())
+    }
+
+    @Test
+    fun `dequeueMessage should create DLQ and make it available in metadata`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val dlqId = UUID.randomUUID()
+        val initialMetadata =
+            GetQueueMetadataResponse(
+                queue_id = queueId,
+                queue_name = "test-queue",
+                queue_size = 1000,
+                visibility_timeout = 30,
+                max_deliveries = 5,
+                current_message_count = 10,
+                dlq_id = null,
+            )
+        val updatedMetadata =
+            GetQueueMetadataResponse(
+                queue_id = queueId,
+                queue_name = "test-queue",
+                queue_size = 1000,
+                visibility_timeout = 30,
+                max_deliveries = 5,
+                current_message_count = 8,
+                dlq_id = dlqId,
+            )
+        val dequeueResponse = DequeueMessageResponse(message = null)
+
+        // When & Then - First call to metadata shows no DLQ
+        whenever(queueService.getQueueMetadata(queueId.toString())).thenReturn(initialMetadata)
+
+        mockMvc.perform(
+            get("/api/queues/{queue_id}", queueId)
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.dlq_id").doesNotExist())
+
+        // When & Then - Call dequeue which creates DLQ internally
+        whenever(queueService.dequeueMessage(queueId.toString())).thenReturn(dequeueResponse)
+        whenever(queueService.getQueueMetadata(queueId.toString())).thenReturn(updatedMetadata)
+
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages", queueId)
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+
+        // When & Then - Second call to metadata shows DLQ now exists
+        mockMvc.perform(
+            get("/api/queues/{queue_id}", queueId)
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.dlq_id").value(dlqId.toString()))
+
+        verify(queueService, times(2)).getQueueMetadata(queueId.toString())
+        verify(queueService, times(1)).dequeueMessage(queueId.toString())
     }
 }

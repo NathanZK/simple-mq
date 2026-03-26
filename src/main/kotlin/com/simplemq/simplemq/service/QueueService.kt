@@ -2,6 +2,8 @@ package com.simplemq.simplemq.service
 
 import com.simplemq.simplemq.dto.CreateQueueRequest
 import com.simplemq.simplemq.dto.CreateQueueResponse
+import com.simplemq.simplemq.dto.DequeueMessageResponse
+import com.simplemq.simplemq.dto.DequeuedMessage
 import com.simplemq.simplemq.dto.EnqueueMessageRequest
 import com.simplemq.simplemq.dto.EnqueueMessageResponse
 import com.simplemq.simplemq.dto.GetQueueMetadataResponse
@@ -84,5 +86,118 @@ class QueueService(
         queueRepository.save(updatedQueue)
 
         return EnqueueMessageResponse(savedMessage.messageId)
+    }
+
+    @Transactional
+    fun dequeueMessage(queueId: String): DequeueMessageResponse {
+        val queueIdAsUUID = UUID.fromString(queueId)
+        val now = LocalDateTime.now()
+
+        // Get the queue first
+        val queue =
+            queueRepository
+                .findById(queueIdAsUUID)
+                .orElseThrow { IllegalArgumentException("Queue not found with ID: $queueId") }
+
+        // Step 1: Find exhausted messages first
+        val exhaustedMessages =
+            messageRepository.findExhaustedMessages(
+                queueId = queueIdAsUUID,
+                maxDeliveries = queue.maxDeliveries,
+                now = now,
+            )
+
+        // Step 2: Only create/get DLQ if there are exhausted messages
+        if (exhaustedMessages.isNotEmpty()) {
+            // Find existing DLQ or create new one
+            val dlq =
+                queueRepository
+                    .findByParentQueueId(queueIdAsUUID)
+                    .firstOrNull()
+            val finalDlq =
+                if (dlq == null) {
+                    val newDlq =
+                        Queue(
+                            queueId = UUID.randomUUID(),
+                            queueName = queue.queueName + "-dlq",
+                            queueSize = queue.queueSize,
+                            visibilityTimeout = queue.visibilityTimeout,
+                            maxDeliveries = queue.maxDeliveries,
+                            currentMessageCount = 0,
+                            parentQueueId = queueIdAsUUID,
+                        )
+                    queueRepository.save(newDlq)
+                } else {
+                    dlq
+                }
+
+            // Calculate how many messages can be moved to DLQ
+            val availableSpace = finalDlq.queueSize - finalDlq.currentMessageCount
+            val messagesToMove =
+                if (availableSpace > 0) {
+                    exhaustedMessages.take(availableSpace)
+                } else {
+                    emptyList()
+                }
+
+            if (messagesToMove.isNotEmpty()) {
+                // Move available messages to DLQ in batch
+                val dlqMessages =
+                    messagesToMove.map { exhaustedMessage ->
+                        Message(
+                            messageId = UUID.randomUUID(),
+                            queueId = finalDlq.queueId,
+                            data = exhaustedMessage.data,
+                            deliveryCount = exhaustedMessage.deliveryCount,
+                            visibleAt = LocalDateTime.now(),
+                            createdAt = exhaustedMessage.createdAt,
+                        )
+                    }
+
+                // Save all DLQ messages at once
+                messageRepository.saveAll(dlqMessages)
+
+                // Delete only the messages that were moved to DLQ
+                messageRepository.deleteAll(messagesToMove)
+
+                // Update queue counts
+                queue.currentMessageCount -= messagesToMove.size
+                finalDlq.currentMessageCount += messagesToMove.size
+
+                queueRepository.save(queue)
+                queueRepository.save(finalDlq)
+            }
+            // Note: If DLQ is full or not enough space, remaining exhausted messages stay in source queue
+            // This should be monitored via metrics in a real implementation
+        }
+
+        // Step 3: Dequeue next available message
+        val message =
+            messageRepository.findAndLockNextAvailableMessage(
+                queueId = queueIdAsUUID,
+                maxDeliveries = queue.maxDeliveries,
+                now = now,
+            )
+
+        return if (message != null) {
+            // Update the message
+            val newVisibleAt = now.plusSeconds(queue.visibilityTimeout.toLong())
+            messageRepository.updateMessageDelivery(
+                messageId = message.messageId,
+                deliveryCount = message.deliveryCount + 1,
+                visibleAt = newVisibleAt,
+            )
+
+            DequeueMessageResponse(
+                message =
+                    DequeuedMessage(
+                        message_id = message.messageId,
+                        data = message.data,
+                        visible_until = newVisibleAt,
+                    ),
+            )
+        } else {
+            DequeueMessageResponse(message = null)
+        }
     }
 }
