@@ -1,29 +1,22 @@
-# Multi-stage build for simple-mq
-
 # Builder stage
 FROM eclipse-temurin:21-jdk AS builder
 WORKDIR /app
 
-# Copy Gradle wrapper and build files
 COPY gradle/wrapper gradle/wrapper
 COPY gradlew .
 COPY build.gradle.kts .
-
-# Make gradlew executable
+COPY settings.gradle.kts .
 RUN chmod +x gradlew
 
-# Copy source code
-COPY src src
+# Download dependencies — this layer is cached as long as build.gradle.kts doesn't change
+RUN ./gradlew dependencies --no-daemon
 
-# Build the application
-RUN ./gradlew build -x test
+# Now copy source — cache only invalidates from here on source changes
+COPY src src
+RUN ./gradlew build -x test --no-daemon
 
 # Runtime stage
 FROM eclipse-temurin:21-jre
 WORKDIR /app
-
-# Copy the built JAR from builder stage
 COPY --from=builder /app/build/libs/*.jar app.jar
-
-# Run the application
 ENTRYPOINT ["java", "-jar", "app.jar"]

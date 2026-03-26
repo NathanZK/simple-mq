@@ -541,6 +541,41 @@ If the DLQ has reached `queue_size`, messages that would be routed to the DLQ re
 
 ---
 
+## Deployment
+
+### CI/CD
+
+This project uses GitHub Actions for continuous integration and deployment:
+
+- **CI**: Runs on pull requests to `main` - executes tests and code style checks
+- **CD**: Runs on pushes to any branch - builds and pushes Docker images
+
+#### Required GitHub Secrets
+
+Set these in your GitHub repository settings:
+
+- `DOCKERHUB_USERNAME`: Your Docker Hub username
+- `DOCKERHUB_TOKEN`: Your Docker Hub access token
+
+#### Docker Images
+
+Images are automatically built and pushed to Docker Hub:
+
+- `nathanzk/simple-mq:{short-sha}`: Tagged with commit SHA
+- `nathanzk/simple-mq:latest`: Latest version (only on main branch)
+
+#### Manual Docker Build
+
+```bash
+# Build for production
+docker build -t nathanzk/simple-mq:latest .
+
+# Run the container
+docker run -p 8080:8080 nathanzk/simple-mq:latest
+```
+
+---
+
 ## Future Improvements
 
 - PostgreSQL primary-replica with automatic failover
