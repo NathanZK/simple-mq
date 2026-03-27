@@ -225,4 +225,55 @@ class QueueService(
         val updatedQueue = queue.copy(currentMessageCount = queue.currentMessageCount - 1)
         queueRepository.save(updatedQueue)
     }
+
+    @Transactional
+    fun requeueMessage(
+        messageId: String,
+        queueId: String,
+    ): EnqueueMessageResponse {
+        val messageIdAsUUID = UUID.fromString(messageId)
+        val queueIdAsUUID = UUID.fromString(queueId)
+
+        // Look up message by messageId
+        val message =
+            messageRepository.findByMessageId(messageIdAsUUID)
+                ?: throw IllegalArgumentException("Message not found")
+
+        // Look up source queue
+        val sourceQueue =
+            queueRepository.findById(message.queueId)
+                .orElseThrow { IllegalArgumentException("Source queue not found") }
+
+        // Look up destination queue
+        val destinationQueue =
+            queueRepository.findById(queueIdAsUUID)
+                .orElseThrow { IllegalArgumentException("Queue not found with ID: $queueId") }
+
+        // Check destination queue capacity
+        if (destinationQueue.currentMessageCount >= destinationQueue.queueSize) {
+            throw IllegalStateException(
+                "Destination queue is full (capacity: ${destinationQueue.queueSize}, current: ${destinationQueue.currentMessageCount})",
+            )
+        }
+
+        // Update the message: set queue_id to queueId, reset visibility timeout and delivery count
+        val updatedVisibleAt = LocalDateTime.now() // Available immediately for processing
+        messageRepository.updateMessageQueue(messageIdAsUUID, queueIdAsUUID)
+        messageRepository.updateMessageDelivery(
+            messageId = messageIdAsUUID,
+            deliveryCount = 0,
+            visibleAt = updatedVisibleAt,
+        )
+
+        // Update queue message counts
+        val updatedSourceQueue = sourceQueue.copy(currentMessageCount = sourceQueue.currentMessageCount - 1)
+        val updatedDestinationQueue = destinationQueue.copy(currentMessageCount = destinationQueue.currentMessageCount + 1)
+
+        queueRepository.save(updatedSourceQueue)
+        queueRepository.save(updatedDestinationQueue)
+
+        return EnqueueMessageResponse(
+            message_id = messageIdAsUUID,
+        )
+    }
 }

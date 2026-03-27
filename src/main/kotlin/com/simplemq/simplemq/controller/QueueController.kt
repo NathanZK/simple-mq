@@ -64,4 +64,13 @@ class QueueController(
         queueService.deleteMessage(queue_id, message_id)
         return ResponseEntity.ok().build()
     }
+
+    @PostMapping("/{queue_id}/messages/{message_id}/requeue")
+    fun requeueMessage(
+        @PathVariable queue_id: String,
+        @PathVariable message_id: String,
+    ): ResponseEntity<EnqueueMessageResponse> {
+        val response = queueService.requeueMessage(message_id, queue_id)
+        return ResponseEntity.ok(response)
+    }
 }
