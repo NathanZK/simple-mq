@@ -15,7 +15,7 @@ terraform {
 provider "google" {
   project     = var.gcp_project
   region      = var.gcp_region
-  credentials = file(var.gcp_credentials_path)
+  credentials = var.gcp_credentials_path != "" ? file(var.gcp_credentials_path) : null
 }
 
 # Compute instance
@@ -40,7 +40,7 @@ resource "google_compute_instance" "simple_mq_vm" {
   }
 
   metadata = {
-    ssh-keys       = "appuser:${file("${path.module}/../.ssh/id_rsa.pub")}"
+    ssh-keys       = "appuser:${var.ssh_public_key}"
     startup-script = file("${path.module}/startup.sh")
   }
 
