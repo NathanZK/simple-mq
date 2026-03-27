@@ -54,3 +54,8 @@ out/
 *.pem
 id_rsa
 id_rsa.pub
+
+### Vim ###
+*.swp
+*.swo
+*~

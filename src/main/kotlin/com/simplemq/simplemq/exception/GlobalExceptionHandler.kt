@@ -12,6 +12,7 @@ class GlobalExceptionHandler {
     fun handleIllegalArgumentException(ex: IllegalArgumentException): ResponseEntity<Map<String, String>> {
         val status =
             when {
+                ex.message?.contains("Message not found") == true -> HttpStatus.NOT_FOUND
                 ex.message?.contains("Queue not found") == true -> HttpStatus.NOT_FOUND
                 ex.message?.contains("Invalid UUID") == true -> HttpStatus.BAD_REQUEST
                 else -> HttpStatus.BAD_REQUEST
