@@ -47,6 +47,7 @@ out/
 *.tfplan
 *.lock.hcl
 .terraform.lock.hcl
+*.tfvars
 
 ### SSH Keys ###
 .ssh/

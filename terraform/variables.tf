@@ -13,7 +13,7 @@ variable "gcp_region" {
 variable "gcp_credentials_path" {
   description = "Path to GCP service account JSON key"
   type        = string
-  default     = "~/.gcp/simple-mq-terraform.json"
+  default     = ""
 }
 
 variable "github_username" {
@@ -28,14 +28,7 @@ variable "machine_type" {
   default     = "e2-micro"
 }
 
-variable "boot_disk_size" {
-  description = "Boot disk size in GB"
-  type        = number
-  default     = 20
-}
-
-variable "boot_disk_image" {
-  description = "Boot disk image"
+variable "ssh_public_key" {
+  description = "SSH public key for appuser"
   type        = string
-  default     = "debian-cloud/debian-12"
 }
