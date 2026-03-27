@@ -45,8 +45,19 @@ interface MessageRepository : JpaRepository<Message, UUID> {
         @Param("visibleAt") visibleAt: LocalDateTime,
     )
 
+    @Modifying
+    @Query(
+        "UPDATE Message m SET m.queueId = :queueId WHERE m.messageId = :messageId",
+    )
+    fun updateMessageQueue(
+        @Param("messageId") messageId: UUID,
+        @Param("queueId") queueId: UUID,
+    )
+
     fun findByMessageIdAndQueueId(
         messageId: UUID,
         queueId: UUID,
     ): Message?
+
+    fun findByMessageId(messageId: UUID): Message?
 }

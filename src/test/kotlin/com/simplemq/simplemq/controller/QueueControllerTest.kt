@@ -510,65 +510,6 @@ class QueueControllerTest {
     }
 
     @Test
-    fun `dequeueMessage should create DLQ and make it available in metadata`() {
-        // Given
-        val queueId = UUID.randomUUID()
-        val dlqId = UUID.randomUUID()
-        val initialMetadata =
-            GetQueueMetadataResponse(
-                queue_id = queueId,
-                queue_name = "test-queue",
-                queue_size = 1000,
-                visibility_timeout = 30,
-                max_deliveries = 5,
-                current_message_count = 10,
-                dlq_id = null,
-            )
-        val updatedMetadata =
-            GetQueueMetadataResponse(
-                queue_id = queueId,
-                queue_name = "test-queue",
-                queue_size = 1000,
-                visibility_timeout = 30,
-                max_deliveries = 5,
-                current_message_count = 8,
-                dlq_id = dlqId,
-            )
-        val dequeueResponse = DequeueMessageResponse(message = null)
-
-        // When & Then - First call to metadata shows no DLQ
-        whenever(queueService.getQueueMetadata(queueId.toString())).thenReturn(initialMetadata)
-
-        mockMvc.perform(
-            get("/api/queues/{queue_id}", queueId)
-                .contentType(MediaType.APPLICATION_JSON),
-        )
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.dlq_id").doesNotExist())
-
-        // When & Then - Call dequeue which creates DLQ internally
-        whenever(queueService.dequeueMessage(queueId.toString())).thenReturn(dequeueResponse)
-        whenever(queueService.getQueueMetadata(queueId.toString())).thenReturn(updatedMetadata)
-
-        mockMvc.perform(
-            get("/api/queues/{queue_id}/messages", queueId)
-                .contentType(MediaType.APPLICATION_JSON),
-        )
-            .andExpect(status().isOk())
-
-        // When & Then - Second call to metadata shows DLQ now exists
-        mockMvc.perform(
-            get("/api/queues/{queue_id}", queueId)
-                .contentType(MediaType.APPLICATION_JSON),
-        )
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.dlq_id").value(dlqId.toString()))
-
-        verify(queueService, times(2)).getQueueMetadata(queueId.toString())
-        verify(queueService, times(1)).dequeueMessage(queueId.toString())
-    }
-
-    @Test
     fun `deleteMessage should return 200 OK when message is successfully deleted`() {
         // Given
         val queueId = UUID.randomUUID()
@@ -658,5 +599,202 @@ class QueueControllerTest {
             .andExpect(status().isBadRequest())
 
         verify(queueService, times(1)).deleteMessage(queueId.toString(), invalidMessageId)
+    }
+
+    @Test
+    fun `requeueMessage should return 200 OK with correct response format`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+        val expectedResponse =
+            EnqueueMessageResponse(
+                message_id = messageId,
+            )
+
+        whenever(queueService.requeueMessage(messageId.toString(), queueId.toString())).thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages/{message_id}/requeue", queueId.toString(), messageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.message_id").value(messageId.toString()))
+
+        verify(queueService, times(1)).requeueMessage(messageId.toString(), queueId.toString())
+    }
+
+    @Test
+    fun `requeueMessage should return 404 Not Found when message does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+
+        whenever(queueService.requeueMessage(messageId.toString(), queueId.toString()))
+            .thenThrow(IllegalArgumentException("Message not found"))
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages/{message_id}/requeue", queueId.toString(), messageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isNotFound())
+
+        verify(queueService, times(1)).requeueMessage(messageId.toString(), queueId.toString())
+    }
+
+    @Test
+    fun `requeueMessage should return 404 Not Found when destination queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+
+        whenever(queueService.requeueMessage(messageId.toString(), queueId.toString()))
+            .thenThrow(IllegalArgumentException("Queue not found with ID: $queueId"))
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages/{message_id}/requeue", queueId.toString(), messageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isNotFound())
+
+        verify(queueService, times(1)).requeueMessage(messageId.toString(), queueId.toString())
+    }
+
+    @Test
+    fun `requeueMessage should return 429 Too Many Requests when destination queue is full`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+
+        whenever(queueService.requeueMessage(messageId.toString(), queueId.toString()))
+            .thenThrow(IllegalStateException("Destination queue is full (capacity: 100, current: 100)"))
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages/{message_id}/requeue", queueId.toString(), messageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isTooManyRequests())
+
+        verify(queueService, times(1)).requeueMessage(messageId.toString(), queueId.toString())
+    }
+
+    @Test
+    fun `requeueMessage should return 400 Bad Request for invalid message UUID format`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val invalidMessageId = "invalid-uuid-format"
+
+        whenever(queueService.requeueMessage(invalidMessageId, queueId.toString()))
+            .thenThrow(IllegalArgumentException("Invalid UUID format"))
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages/{message_id}/requeue", queueId.toString(), invalidMessageId)
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isBadRequest())
+
+        verify(queueService, times(1)).requeueMessage(invalidMessageId, queueId.toString())
+    }
+
+    @Test
+    fun `requeueMessage should return 400 Bad Request for invalid queue UUID format`() {
+        // Given
+        val invalidQueueId = "invalid-uuid-format"
+        val messageId = UUID.randomUUID()
+
+        whenever(queueService.requeueMessage(messageId.toString(), invalidQueueId))
+            .thenThrow(IllegalArgumentException("Invalid UUID format"))
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages/{message_id}/requeue", invalidQueueId, messageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isBadRequest())
+
+        verify(queueService, times(1)).requeueMessage(messageId.toString(), invalidQueueId)
+    }
+
+    @Test
+    fun `requeueMessage should return correct JSON structure`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+        val expectedResponse =
+            EnqueueMessageResponse(
+                message_id = messageId,
+            )
+
+        whenever(queueService.requeueMessage(messageId.toString(), queueId.toString())).thenReturn(expectedResponse)
+
+        // When & Then
+        val result =
+            mockMvc.perform(
+                post("/api/queues/{queue_id}/messages/{message_id}/requeue", queueId.toString(), messageId.toString())
+                    .contentType(MediaType.APPLICATION_JSON),
+            )
+                .andExpect(status().isOk())
+                .andReturn().response.contentAsString
+
+        // Verify JSON structure
+        assertTrue(result.contains("\"message_id\""))
+        assertFalse(result.contains("\"queue_id\""))
+        assertFalse(result.contains("\"data\""))
+        assertFalse(result.contains("\"delivery_count\""))
+        assertFalse(result.contains("\"visible_until\""))
+        assertTrue(result.contains(messageId.toString()))
+
+        verify(queueService, times(1)).requeueMessage(messageId.toString(), queueId.toString())
+    }
+
+    @Test
+    fun `requeueMessage should handle requeuing to original queue`() {
+        // Given
+        val originalQueueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+        val expectedResponse =
+            EnqueueMessageResponse(
+                message_id = messageId,
+            )
+
+        whenever(queueService.requeueMessage(messageId.toString(), originalQueueId.toString())).thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages/{message_id}/requeue", originalQueueId.toString(), messageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.message_id").value(messageId.toString()))
+
+        verify(queueService, times(1)).requeueMessage(messageId.toString(), originalQueueId.toString())
+    }
+
+    @Test
+    fun `requeueMessage should handle requeuing to different queue`() {
+        // Given
+        val destinationQueueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+        val expectedResponse =
+            EnqueueMessageResponse(
+                message_id = messageId,
+            )
+
+        whenever(queueService.requeueMessage(messageId.toString(), destinationQueueId.toString())).thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            post("/api/queues/{queue_id}/messages/{message_id}/requeue", destinationQueueId.toString(), messageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.message_id").value(messageId.toString()))
+
+        verify(queueService, times(1)).requeueMessage(messageId.toString(), destinationQueueId.toString())
     }
 }

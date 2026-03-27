@@ -843,4 +843,322 @@ class QueueServiceTest {
         verify(messageRepository, never()).findByMessageIdAndQueueId(any(), any())
         verify(messageRepository, never()).deleteById(any())
     }
+
+    @Test
+    fun `requeueMessage should successfully requeue message from any queue to destination queue`() {
+        // Given
+        val messageId = UUID.randomUUID()
+        val sourceQueueId = UUID.randomUUID()
+        val destinationQueueId = UUID.randomUUID()
+        val message =
+            Message(
+                messageId = messageId,
+                queueId = sourceQueueId,
+                data = "test message data",
+                deliveryCount = 3,
+                visibleAt = LocalDateTime.now().minusSeconds(10),
+            )
+        val sourceQueue =
+            Queue(
+                queueId = sourceQueueId,
+                queueName = "source-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 5,
+                parentQueueId = null,
+            )
+        val destinationQueue =
+            Queue(
+                queueId = destinationQueueId,
+                queueName = "destination-queue",
+                queueSize = 1000,
+                visibilityTimeout = 45,
+                maxDeliveries = 5,
+                currentMessageCount = 2,
+            )
+
+        // When
+        whenever(messageRepository.findByMessageId(messageId)).thenReturn(message)
+        whenever(queueRepository.findById(sourceQueueId)).thenReturn(Optional.of(sourceQueue))
+        whenever(queueRepository.findById(destinationQueueId)).thenReturn(Optional.of(destinationQueue))
+        whenever(queueRepository.save(any<Queue>())).thenReturn(sourceQueue, destinationQueue)
+
+        val response = queueService.requeueMessage(messageId.toString(), destinationQueueId.toString())
+
+        // Then
+        verify(messageRepository, times(1)).findByMessageId(messageId)
+        verify(messageRepository, times(1)).updateMessageQueue(messageId, destinationQueueId)
+        verify(messageRepository, times(1)).updateMessageDelivery(
+            messageId = eq(messageId),
+            deliveryCount = eq(0),
+            visibleAt = any(),
+        )
+        verify(queueRepository, times(2)).save(any<Queue>())
+
+        assertEquals(messageId, response.message_id)
+    }
+
+    @Test
+    fun `requeueMessage should throw IllegalArgumentException when message does not exist`() {
+        // Given
+        val messageId = UUID.randomUUID()
+        val destinationQueueId = UUID.randomUUID()
+
+        // When
+        whenever(messageRepository.findByMessageId(messageId)).thenReturn(null)
+
+        // Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.requeueMessage(messageId.toString(), destinationQueueId.toString())
+            }
+
+        assertEquals("Message not found", exception.message)
+        verify(messageRepository, times(1)).findByMessageId(messageId)
+        verify(messageRepository, never()).updateMessageQueue(any(), any())
+        verify(messageRepository, never()).updateMessageDelivery(any(), any(), any())
+        verify(queueRepository, never()).save(any())
+    }
+
+    @Test
+    fun `requeueMessage should throw IllegalArgumentException when destination queue does not exist`() {
+        // Given
+        val messageId = UUID.randomUUID()
+        val sourceQueueId = UUID.randomUUID()
+        val destinationQueueId = UUID.randomUUID()
+        val parentQueueId = UUID.randomUUID()
+        val message =
+            Message(
+                messageId = messageId,
+                queueId = sourceQueueId,
+                data = "test message",
+                deliveryCount = 2,
+                visibleAt = LocalDateTime.now(),
+            )
+        val sourceQueue =
+            Queue(
+                queueId = sourceQueueId,
+                queueName = "source-dlq",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 3,
+                parentQueueId = parentQueueId,
+            )
+
+        // When
+        whenever(messageRepository.findByMessageId(messageId)).thenReturn(message)
+        whenever(queueRepository.findById(sourceQueueId)).thenReturn(Optional.of(sourceQueue))
+        whenever(queueRepository.findById(destinationQueueId)).thenReturn(Optional.empty())
+
+        // Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.requeueMessage(messageId.toString(), destinationQueueId.toString())
+            }
+
+        assertEquals("Queue not found with ID: $destinationQueueId", exception.message)
+        verify(messageRepository, times(1)).findByMessageId(messageId)
+        verify(messageRepository, never()).updateMessageQueue(any(), any())
+        verify(messageRepository, never()).updateMessageDelivery(any(), any(), any())
+        verify(queueRepository, never()).save(any())
+    }
+
+    @Test
+    fun `requeueMessage should throw IllegalStateException when destination queue is full`() {
+        // Given
+        val messageId = UUID.randomUUID()
+        val sourceQueueId = UUID.randomUUID()
+        val destinationQueueId = UUID.randomUUID()
+        val parentQueueId = UUID.randomUUID()
+        val message =
+            Message(
+                messageId = messageId,
+                queueId = sourceQueueId,
+                data = "test message",
+                deliveryCount = 2,
+                visibleAt = LocalDateTime.now(),
+            )
+        val sourceQueue =
+            Queue(
+                queueId = sourceQueueId,
+                queueName = "source-dlq",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 3,
+                parentQueueId = parentQueueId,
+            )
+        val fullDestinationQueue =
+            Queue(
+                queueId = destinationQueueId,
+                queueName = "full-queue",
+                queueSize = 100,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 100,
+            )
+
+        // When
+        whenever(messageRepository.findByMessageId(messageId)).thenReturn(message)
+        whenever(queueRepository.findById(sourceQueueId)).thenReturn(Optional.of(sourceQueue))
+        whenever(queueRepository.findById(destinationQueueId)).thenReturn(Optional.of(fullDestinationQueue))
+
+        // Then
+        val exception =
+            assertThrows(IllegalStateException::class.java) {
+                queueService.requeueMessage(messageId.toString(), destinationQueueId.toString())
+            }
+
+        assertEquals("Destination queue is full (capacity: 100, current: 100)", exception.message)
+        verify(messageRepository, times(1)).findByMessageId(messageId)
+        verify(messageRepository, never()).updateMessageQueue(any(), any())
+        verify(messageRepository, never()).updateMessageDelivery(any(), any(), any())
+        verify(queueRepository, never()).save(any())
+    }
+
+    @Test
+    fun `requeueMessage should update queue message counts correctly`() {
+        // Given
+        val messageId = UUID.randomUUID()
+        val sourceQueueId = UUID.randomUUID()
+        val destinationQueueId = UUID.randomUUID()
+        val parentQueueId = UUID.randomUUID()
+        val message =
+            Message(
+                messageId = messageId,
+                queueId = sourceQueueId,
+                data = "test message",
+                deliveryCount = 2,
+                visibleAt = LocalDateTime.now(),
+            )
+        val sourceQueue =
+            Queue(
+                queueId = sourceQueueId,
+                queueName = "source-dlq",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 10,
+                parentQueueId = parentQueueId,
+            )
+        val destinationQueue =
+            Queue(
+                queueId = destinationQueueId,
+                queueName = "destination-queue",
+                queueSize = 1000,
+                visibilityTimeout = 60,
+                maxDeliveries = 5,
+                currentMessageCount = 5,
+            )
+
+        // When
+        whenever(messageRepository.findByMessageId(messageId)).thenReturn(message)
+        whenever(queueRepository.findById(sourceQueueId)).thenReturn(Optional.of(sourceQueue))
+        whenever(queueRepository.findById(destinationQueueId)).thenReturn(Optional.of(destinationQueue))
+        whenever(queueRepository.save(any<Queue>())).thenReturn(sourceQueue, destinationQueue)
+
+        queueService.requeueMessage(messageId.toString(), destinationQueueId.toString())
+
+        // Then
+        val capturedQueues = ArgumentCaptor.forClass(Queue::class.java)
+
+        verify(queueRepository, times(2)).save(capture(capturedQueues))
+        val allCaptured = capturedQueues.allValues
+
+        assertEquals(9, allCaptured[0].currentMessageCount) // Source queue decremented by 1
+        assertEquals(6, allCaptured[1].currentMessageCount) // Destination queue incremented by 1
+    }
+
+    @Test
+    fun `requeueMessage should throw IllegalArgumentException for invalid message UUID format`() {
+        // Given
+        val invalidMessageId = "invalid-uuid-format"
+        val destinationQueueId = UUID.randomUUID()
+
+        // When & Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.requeueMessage(invalidMessageId, destinationQueueId.toString())
+            }
+
+        assertTrue(exception.message!!.contains("Invalid UUID"))
+        verify(messageRepository, never()).findByMessageId(any())
+        verify(messageRepository, never()).updateMessageQueue(any(), any())
+        verify(messageRepository, never()).updateMessageDelivery(any(), any(), any())
+        verify(queueRepository, never()).save(any())
+    }
+
+    @Test
+    fun `requeueMessage should throw IllegalArgumentException for invalid destination queue UUID format`() {
+        // Given
+        val messageId = UUID.randomUUID()
+        val invalidQueueId = "invalid-uuid-format"
+
+        // When & Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.requeueMessage(messageId.toString(), invalidQueueId)
+            }
+
+        assertTrue(exception.message!!.contains("Invalid UUID"))
+        verify(messageRepository, never()).findByMessageId(any())
+        verify(messageRepository, never()).updateMessageQueue(any(), any())
+        verify(messageRepository, never()).updateMessageDelivery(any(), any(), any())
+        verify(queueRepository, never()).save(any())
+    }
+
+    @Test
+    fun `requeueMessage should handle requeuing to original queue`() {
+        // Given
+        val messageId = UUID.randomUUID()
+        val sourceQueueId = UUID.randomUUID()
+        val destinationQueueId = UUID.randomUUID() // Same as original queue
+        val message =
+            Message(
+                messageId = messageId,
+                queueId = sourceQueueId,
+                data = "original message",
+                deliveryCount = 5,
+                visibleAt = LocalDateTime.now(),
+            )
+        val sourceQueue =
+            Queue(
+                queueId = sourceQueueId,
+                queueName = "source-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 3,
+                parentQueueId = null,
+            )
+        val originalQueue =
+            Queue(
+                queueId = destinationQueueId,
+                queueName = "original-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 7,
+            )
+
+        // When
+        whenever(messageRepository.findByMessageId(messageId)).thenReturn(message)
+        whenever(queueRepository.findById(sourceQueueId)).thenReturn(Optional.of(sourceQueue))
+        whenever(queueRepository.findById(destinationQueueId)).thenReturn(Optional.of(originalQueue))
+        whenever(queueRepository.save(any<Queue>())).thenReturn(sourceQueue, originalQueue)
+
+        val response = queueService.requeueMessage(messageId.toString(), destinationQueueId.toString())
+
+        // Then
+        assertEquals(messageId, response.message_id)
+
+        verify(messageRepository, times(1)).updateMessageQueue(messageId, destinationQueueId)
+        verify(messageRepository, times(1)).updateMessageDelivery(
+            messageId = eq(messageId),
+            deliveryCount = eq(0),
+            visibleAt = any(),
+        )
+    }
 }
