@@ -10,6 +10,7 @@ import com.simplemq.simplemq.service.QueueService
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -53,5 +54,14 @@ class QueueController(
     ): ResponseEntity<DequeueMessageResponse> {
         val response = queueService.dequeueMessage(queue_id)
         return ResponseEntity.ok(response)
+    }
+
+    @DeleteMapping("/{queue_id}/messages/{message_id}")
+    fun deleteMessage(
+        @PathVariable queue_id: String,
+        @PathVariable message_id: String,
+    ): ResponseEntity<Void> {
+        queueService.deleteMessage(queue_id, message_id)
+        return ResponseEntity.ok().build()
     }
 }

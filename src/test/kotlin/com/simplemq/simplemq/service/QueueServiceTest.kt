@@ -757,4 +757,90 @@ class QueueServiceTest {
         verify(messageRepository, times(1)).deleteAll(exhaustedMessages)
         verify(queueRepository, times(2)).save(any<Queue>()) // Once for source queue, once for DLQ
     }
+
+    @Test
+    fun `deleteMessage should delete message and update queue count when message exists and belongs to queue`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+        val queue =
+            Queue(
+                queueId = queueId,
+                queueName = "test-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 10,
+            )
+        val message =
+            Message(
+                messageId = messageId,
+                queueId = queueId,
+                data = "test message",
+                deliveryCount = 1,
+                visibleAt = LocalDateTime.now(),
+            )
+
+        // When
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+        whenever(messageRepository.findByMessageIdAndQueueId(messageId, queueId)).thenReturn(message)
+
+        queueService.deleteMessage(queueId.toString(), messageId.toString())
+
+        // Then
+        verify(messageRepository, times(1)).findByMessageIdAndQueueId(messageId, queueId)
+        verify(messageRepository, times(1)).deleteById(messageId)
+        verify(queueRepository, times(1)).save(queue.copy(currentMessageCount = 9))
+    }
+
+    @Test
+    fun `deleteMessage should throw IllegalArgumentException when message does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+        val queue =
+            Queue(
+                queueId = queueId,
+                queueName = "test-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 10,
+            )
+
+        // When
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+        whenever(messageRepository.findByMessageIdAndQueueId(messageId, queueId)).thenReturn(null)
+
+        // Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.deleteMessage(queueId.toString(), messageId.toString())
+            }
+
+        assertEquals("Message not found", exception.message)
+        verify(messageRepository, times(1)).findByMessageIdAndQueueId(messageId, queueId)
+        verify(messageRepository, never()).deleteById(any())
+        verify(queueRepository, never()).save(any())
+    }
+
+    @Test
+    fun `deleteMessage should throw IllegalArgumentException when queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+
+        // When
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.empty())
+
+        // Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.deleteMessage(queueId.toString(), messageId.toString())
+            }
+
+        assertEquals("Message not found", exception.message)
+        verify(messageRepository, never()).findByMessageIdAndQueueId(any(), any())
+        verify(messageRepository, never()).deleteById(any())
+    }
 }

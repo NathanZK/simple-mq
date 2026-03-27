@@ -22,6 +22,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
@@ -565,5 +566,97 @@ class QueueControllerTest {
 
         verify(queueService, times(2)).getQueueMetadata(queueId.toString())
         verify(queueService, times(1)).dequeueMessage(queueId.toString())
+    }
+
+    @Test
+    fun `deleteMessage should return 200 OK when message is successfully deleted`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+
+        // When & Then
+        mockMvc.perform(
+            delete("/api/queues/{queue_id}/messages/{message_id}", queueId.toString(), messageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+
+        verify(queueService, times(1)).deleteMessage(queueId.toString(), messageId.toString())
+    }
+
+    @Test
+    fun `deleteMessage should return 404 Not Found when message does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+
+        whenever(queueService.deleteMessage(queueId.toString(), messageId.toString()))
+            .thenThrow(IllegalArgumentException("Message not found"))
+
+        // When & Then
+        mockMvc.perform(
+            delete("/api/queues/{queue_id}/messages/{message_id}", queueId.toString(), messageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isNotFound())
+
+        verify(queueService, times(1)).deleteMessage(queueId.toString(), messageId.toString())
+    }
+
+    @Test
+    fun `deleteMessage should return 404 Not Found when queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val messageId = UUID.randomUUID()
+
+        whenever(queueService.deleteMessage(queueId.toString(), messageId.toString()))
+            .thenThrow(IllegalArgumentException("Message not found"))
+
+        // When & Then
+        mockMvc.perform(
+            delete("/api/queues/{queue_id}/messages/{message_id}", queueId.toString(), messageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isNotFound())
+
+        verify(queueService, times(1)).deleteMessage(queueId.toString(), messageId.toString())
+    }
+
+    @Test
+    fun `deleteMessage should return 400 Bad Request for invalid queue UUID format`() {
+        // Given
+        val invalidQueueId = "invalid-uuid-format"
+        val messageId = UUID.randomUUID()
+
+        whenever(queueService.deleteMessage(invalidQueueId, messageId.toString()))
+            .thenThrow(IllegalArgumentException("Invalid UUID format"))
+
+        // When & Then
+        mockMvc.perform(
+            delete("/api/queues/{queue_id}/messages/{message_id}", invalidQueueId, messageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isBadRequest())
+
+        verify(queueService, times(1)).deleteMessage(invalidQueueId, messageId.toString())
+    }
+
+    @Test
+    fun `deleteMessage should return 400 Bad Request for invalid message UUID format`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val invalidMessageId = "invalid-uuid-format"
+
+        whenever(queueService.deleteMessage(queueId.toString(), invalidMessageId))
+            .thenThrow(IllegalArgumentException("Invalid UUID format"))
+
+        // When & Then
+        mockMvc.perform(
+            delete("/api/queues/{queue_id}/messages/{message_id}", queueId.toString(), invalidMessageId)
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isBadRequest())
+
+        verify(queueService, times(1)).deleteMessage(queueId.toString(), invalidMessageId)
     }
 }

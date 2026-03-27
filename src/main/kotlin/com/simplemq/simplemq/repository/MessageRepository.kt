@@ -44,4 +44,9 @@ interface MessageRepository : JpaRepository<Message, UUID> {
         @Param("deliveryCount") deliveryCount: Int,
         @Param("visibleAt") visibleAt: LocalDateTime,
     )
+
+    fun findByMessageIdAndQueueId(
+        messageId: UUID,
+        queueId: UUID,
+    ): Message?
 }

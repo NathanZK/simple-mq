@@ -200,4 +200,29 @@ class QueueService(
             DequeueMessageResponse(message = null)
         }
     }
+
+    @Transactional
+    fun deleteMessage(
+        queueId: String,
+        messageId: String,
+    ) {
+        val queueIdAsUUID = UUID.fromString(queueId)
+        val messageIdAsUUID = UUID.fromString(messageId)
+
+        // Check if queue exists
+        val queue =
+            queueRepository.findById(queueIdAsUUID)
+                .orElseThrow { IllegalArgumentException("Message not found") }
+
+        // Check if message exists and belongs to the specified queue
+        messageRepository.findByMessageIdAndQueueId(messageIdAsUUID, queueIdAsUUID)
+            ?: throw IllegalArgumentException("Message not found")
+
+        // Delete the message
+        messageRepository.deleteById(messageIdAsUUID)
+
+        // Update queue message count
+        val updatedQueue = queue.copy(currentMessageCount = queue.currentMessageCount - 1)
+        queueRepository.save(updatedQueue)
+    }
 }
