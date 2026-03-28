@@ -25,6 +25,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/simplemq
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: postgres
+      OTLP_ENDPOINT: ${OTLP_ENDPOINT}
+      OTLP_AUTH: ${OTLP_AUTH}
     depends_on:
       postgres:
         condition: service_healthy
