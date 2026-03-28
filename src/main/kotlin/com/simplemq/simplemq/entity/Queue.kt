@@ -23,8 +23,8 @@ data class Queue(
     val maxDeliveries: Int,
     @Column(name = "current_message_count", nullable = false)
     var currentMessageCount: Int = 0,
-    @Column(name = "parent_queue_id")
-    val parentQueueId: UUID? = null,
+    @Column(name = "dlq_id")
+    val dlqId: UUID? = null,
     @Column(name = "created_at", nullable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
 )

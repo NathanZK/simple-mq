@@ -52,7 +52,7 @@ class QueueService(
             visibility_timeout = queue.visibilityTimeout,
             max_deliveries = queue.maxDeliveries,
             current_message_count = queue.currentMessageCount,
-            dlq_id = queue.parentQueueId,
+            dlq_id = queue.dlqId,
         )
     }
 
@@ -109,13 +109,9 @@ class QueueService(
 
         // Step 2: Only create/get DLQ if there are exhausted messages
         if (exhaustedMessages.isNotEmpty()) {
-            // Find existing DLQ or create new one
-            val dlq =
-                queueRepository
-                    .findByParentQueueId(queueIdAsUUID)
-                    .firstOrNull()
             val finalDlq =
-                if (dlq == null) {
+                if (queue.dlqId == null) {
+                    // Create new DLQ
                     val newDlq =
                         Queue(
                             queueId = UUID.randomUUID(),
@@ -124,11 +120,19 @@ class QueueService(
                             visibilityTimeout = queue.visibilityTimeout,
                             maxDeliveries = queue.maxDeliveries,
                             currentMessageCount = 0,
-                            parentQueueId = queueIdAsUUID,
+                            dlqId = null,
                         )
-                    queueRepository.save(newDlq)
+                    val savedDlq = queueRepository.save(newDlq)
+
+                    // Update the parent queue to point to the new DLQ
+                    val updatedQueue = queue.copy(dlqId = savedDlq.queueId)
+                    queueRepository.save(updatedQueue)
+
+                    savedDlq
                 } else {
-                    dlq
+                    // Use existing DLQ
+                    val dlqId = queue.dlqId!!
+                    queueRepository.findById(dlqId).orElseThrow()
                 }
 
             // Calculate how many messages can be moved to DLQ

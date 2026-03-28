@@ -79,7 +79,7 @@ class QueueServiceTest {
         assertEquals(request.visibilityTimeout, savedQueueArgument.visibilityTimeout)
         assertEquals(request.maxDeliveries, savedQueueArgument.maxDeliveries)
         assertEquals(0, savedQueueArgument.currentMessageCount)
-        assertNull(savedQueueArgument.parentQueueId)
+        assertNull(savedQueueArgument.dlqId)
         assertNotNull(savedQueueArgument.queueId)
 
         assertEquals(savedQueue.queueId, response.queue_id)
@@ -122,7 +122,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 42,
-                parentQueueId = null,
+                dlqId = null,
             )
 
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
@@ -154,7 +154,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 42,
-                parentQueueId = dlqId,
+                dlqId = dlqId,
             )
 
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
@@ -328,7 +328,7 @@ class QueueServiceTest {
         )
 
         // Verify DLQ operations are NOT called since there are no exhausted messages
-        verify(queueRepository, never()).findByParentQueueId(any())
+        verify(queueRepository, times(1)).findById(queueId) // Only initial queue fetch
         verify(queueRepository, never()).save(any<Queue>())
     }
 
@@ -359,7 +359,7 @@ class QueueServiceTest {
         verify(messageRepository, never()).updateMessageDelivery(any(), any(), any())
 
         // Verify DLQ operations are NOT called since there are no exhausted messages
-        verify(queueRepository, never()).findByParentQueueId(any())
+        verify(queueRepository, times(1)).findById(queueId) // Only initial queue fetch
         verify(queueRepository, never()).save(any<Queue>())
     }
 
@@ -386,7 +386,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 0,
-                parentQueueId = queueId,
+                dlqId = null,
             )
         val exhaustedMessages =
             listOf(
@@ -401,19 +401,42 @@ class QueueServiceTest {
 
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
-        whenever(queueRepository.findByParentQueueId(queueId)).thenReturn(emptyList())
         whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(exhaustedMessages)
         whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(null)
         whenever(messageRepository.saveAll(any<List<Message>>())).thenReturn(emptyList())
-        whenever(queueRepository.save(any<Queue>())).thenReturn(createdDlq)
+        whenever(queueRepository.save(any<Queue>())).thenReturn(createdDlq, queue.copy(dlqId = createdDlq.queueId))
 
         queueService.dequeueMessage(queueId.toString())
 
-        // Then - DLQ should be created since there are exhausted messages
-        verify(queueRepository, times(1)).save(createdDlq)
+        // Once for DLQ creation, once for parent queue update, once for parent count update, once for DLQ count update
+        verify(queueRepository, times(4)).save(any<Queue>())
+
+        // Verify that the parent queue was updated with the correct dlqId
+        val queueCaptor = ArgumentCaptor.forClass(Queue::class.java)
+        verify(queueRepository, times(4)).save(capture(queueCaptor))
+
+        val savedQueues = queueCaptor.allValues
+
+        // At minimum, we should have:
+        // 1. A DLQ created with dlqId = null
+        // 2. The parent queue updated with dlqId pointing to the DLQ
+        val dlqSaves = savedQueues.filter { it.dlqId == null && it.queueName.endsWith("-dlq") }
+        val parentQueueUpdates = savedQueues.filter { it.queueId == queueId && it.dlqId != null }
+
+        assertTrue(dlqSaves.isNotEmpty(), "Should have at least one DLQ creation")
+        assertTrue(parentQueueUpdates.isNotEmpty(), "Should have at least one parent queue update with dlqId set")
+
+        // Verify the DLQ was created correctly
+        val actualCreatedDlq = dlqSaves.first()
+        assertNull(actualCreatedDlq.dlqId, "DLQ should have dlqId = null")
+        assertTrue(actualCreatedDlq.queueName.endsWith("-dlq"), "DLQ should have -dlq suffix")
+
+        // Verify the parent queue was updated to point to some DLQ
+        val updatedParentQueue = parentQueueUpdates.first()
+        assertNotNull(updatedParentQueue.dlqId, "Parent queue should have dlqId set")
+
         verify(messageRepository, times(1)).saveAll(any<List<Message>>())
         verify(messageRepository, times(1)).deleteAll(exhaustedMessages)
-        verify(queueRepository, times(1)).save(queue) // Save updated source queue
     }
 
     @Test
@@ -430,6 +453,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 0,
+                dlqId = dlqId,
             )
         val existingDlq =
             Queue(
@@ -439,12 +463,12 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 0,
-                parentQueueId = queueId,
+                dlqId = null,
             )
 
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
-        whenever(queueRepository.findByParentQueueId(queueId)).thenReturn(listOf(existingDlq))
+        whenever(queueRepository.findById(dlqId)).thenReturn(Optional.of(existingDlq))
         whenever(messageRepository.findExhaustedMessages(queueId, 5, now)).thenReturn(emptyList())
         whenever(messageRepository.findAndLockNextAvailableMessage(queueId, 5, now)).thenReturn(null)
 
@@ -470,6 +494,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 10,
+                dlqId = dlqId,
             )
         val dlq =
             Queue(
@@ -479,7 +504,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 2,
-                parentQueueId = queueId,
+                dlqId = null,
             )
         val exhaustedMessages =
             listOf(
@@ -501,7 +526,7 @@ class QueueServiceTest {
 
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
-        whenever(queueRepository.findByParentQueueId(queueId)).thenReturn(listOf(dlq))
+        whenever(queueRepository.findById(dlqId)).thenReturn(Optional.of(dlq))
         whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(exhaustedMessages)
         whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(null)
         whenever(messageRepository.saveAll(any<List<Message>>())).thenReturn(emptyList())
@@ -530,6 +555,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 10,
+                dlqId = dlqId,
             )
         val almostFullDlq =
             Queue(
@@ -539,7 +565,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 3,
-                parentQueueId = queueId,
+                dlqId = null,
             )
         val exhaustedMessages =
             listOf(
@@ -568,7 +594,7 @@ class QueueServiceTest {
 
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
-        whenever(queueRepository.findByParentQueueId(queueId)).thenReturn(listOf(almostFullDlq))
+        whenever(queueRepository.findById(dlqId)).thenReturn(Optional.of(almostFullDlq))
         whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(exhaustedMessages)
         whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(null)
         whenever(messageRepository.saveAll(any<List<Message>>())).thenReturn(emptyList())
@@ -597,6 +623,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 10,
+                dlqId = dlqId,
             )
         val fullDlq =
             Queue(
@@ -606,7 +633,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 5,
-                parentQueueId = queueId,
+                dlqId = null,
             )
         val exhaustedMessages =
             listOf(
@@ -628,7 +655,7 @@ class QueueServiceTest {
 
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
-        whenever(queueRepository.findByParentQueueId(queueId)).thenReturn(listOf(fullDlq))
+        whenever(queueRepository.findById(dlqId)).thenReturn(Optional.of(fullDlq))
         whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(exhaustedMessages)
         whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(null)
 
@@ -706,6 +733,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 3,
                 currentMessageCount = 5,
+                dlqId = dlqId,
             )
         val dlq =
             Queue(
@@ -715,7 +743,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 3,
                 currentMessageCount = 0,
-                parentQueueId = queueId,
+                dlqId = null,
             )
         val exhaustedMessages =
             listOf(
@@ -744,7 +772,7 @@ class QueueServiceTest {
 
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
-        whenever(queueRepository.findByParentQueueId(queueId)).thenReturn(listOf(dlq))
+        whenever(queueRepository.findById(dlqId)).thenReturn(Optional.of(dlq))
         whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(exhaustedMessages)
         whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(null)
         whenever(messageRepository.saveAll(any<List<Message>>())).thenReturn(emptyList())
@@ -866,7 +894,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 5,
-                parentQueueId = null,
+                dlqId = null,
             )
         val destinationQueue =
             Queue(
@@ -927,7 +955,7 @@ class QueueServiceTest {
         val messageId = UUID.randomUUID()
         val sourceQueueId = UUID.randomUUID()
         val destinationQueueId = UUID.randomUUID()
-        val parentQueueId = UUID.randomUUID()
+        val dlqId = UUID.randomUUID()
         val message =
             Message(
                 messageId = messageId,
@@ -944,7 +972,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 3,
-                parentQueueId = parentQueueId,
+                dlqId = dlqId,
             )
 
         // When
@@ -971,7 +999,7 @@ class QueueServiceTest {
         val messageId = UUID.randomUUID()
         val sourceQueueId = UUID.randomUUID()
         val destinationQueueId = UUID.randomUUID()
-        val parentQueueId = UUID.randomUUID()
+        val dlqId = UUID.randomUUID()
         val message =
             Message(
                 messageId = messageId,
@@ -988,7 +1016,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 3,
-                parentQueueId = parentQueueId,
+                dlqId = dlqId,
             )
         val fullDestinationQueue =
             Queue(
@@ -1024,7 +1052,7 @@ class QueueServiceTest {
         val messageId = UUID.randomUUID()
         val sourceQueueId = UUID.randomUUID()
         val destinationQueueId = UUID.randomUUID()
-        val parentQueueId = UUID.randomUUID()
+        val dlqId = UUID.randomUUID()
         val message =
             Message(
                 messageId = messageId,
@@ -1041,7 +1069,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 10,
-                parentQueueId = parentQueueId,
+                dlqId = dlqId,
             )
         val destinationQueue =
             Queue(
@@ -1131,7 +1159,7 @@ class QueueServiceTest {
                 visibilityTimeout = 30,
                 maxDeliveries = 5,
                 currentMessageCount = 3,
-                parentQueueId = null,
+                dlqId = null,
             )
         val originalQueue =
             Queue(
