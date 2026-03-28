@@ -72,6 +72,7 @@ jobs:
         run: |
             gcloud compute ssh appuser@simple-mq-vm --zone=${{ vars.GCP_ZONE }} --command="
               cd /opt/simple-mq &&
+              git config --global --add safe.directory /opt/simple-mq
               git pull &&
               echo 'OTLP_ENDPOINT=${{ secrets.OTLP_ENDPOINT }}' > .env &&
               echo 'OTLP_AUTH=${{ secrets.OTLP_AUTH }}' >> .env &&

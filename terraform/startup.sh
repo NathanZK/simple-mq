@@ -25,6 +25,7 @@ usermod -aG docker appuser
 cd /opt
 git clone https://github.com/${GITHUB_USERNAME:-NathanZK}/simple-mq.git
 cd simple-mq
+chown -R appuser:appuser /opt/simple-mq
 
 # Create .env file if it doesn't exist
 if [ ! -f .env ]; then
