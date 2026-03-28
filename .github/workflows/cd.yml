@@ -70,8 +70,10 @@ jobs:
 
       - name: Deploy to VM
         run: |
-          gcloud compute ssh appuser@simple-mq-vm --zone=us-central1-a --command="
-            cd /opt/simple-mq &&
-            docker pull nathanzk/simple-mq:latest &&
-            docker-compose up -d
-          "
+            gcloud compute ssh appuser@simple-mq-vm --zone=${{ vars.GCP_ZONE }} --command="
+              cd /opt/simple-mq &&
+              echo 'OTLP_ENDPOINT=${{ secrets.OTLP_ENDPOINT }}' > .env &&
+              echo 'OTLP_AUTH=${{ secrets.OTLP_AUTH }}' >> .env &&
+              docker pull nathanzk/simple-mq:latest &&
+              docker-compose up -d
+            "
