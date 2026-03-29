@@ -26,6 +26,13 @@ management:
         url: ${OTLP_ENDPOINT}/v1/metrics
         headers:
           Authorization: Basic ${OTLP_AUTH}
+        histogram-flavor: explicit
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      slo:
+        http.server.requests: 50ms, 100ms, 200ms, 500ms, 1000ms, 2000ms
   endpoints:
     web:
       exposure:
