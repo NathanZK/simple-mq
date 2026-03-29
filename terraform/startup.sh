@@ -25,7 +25,6 @@ usermod -aG docker appuser
 cd /opt
 git clone https://github.com/${GITHUB_USERNAME:-NathanZK}/simple-mq.git
 cd simple-mq
-chown -R appuser:appuser /opt/simple-mq
 
 # Create .env file if it doesn't exist
 if [ ! -f .env ]; then
@@ -36,6 +35,8 @@ QUEUE_MAX_SIZE=1000
 MESSAGE_TTL_SECONDS=3600
 EOF
 fi
+
+chown -R appuser:appuser /opt/simple-mq
 
 # Build and start the application
 docker-compose up -d
