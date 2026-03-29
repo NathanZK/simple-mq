@@ -26,7 +26,7 @@ management:
         url: ${OTLP_ENDPOINT}/v1/metrics
         headers:
           Authorization: Basic ${OTLP_AUTH}
-        histogram-flavor: explicit
+        histogram-flavor: EXPLICIT_BUCKET_HISTOGRAM
   metrics:
     distribution:
       percentiles-histogram:
