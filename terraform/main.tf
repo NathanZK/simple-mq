@@ -28,7 +28,7 @@ resource "google_compute_instance" "simple_mq_vm" {
     initialize_params {
       image = "debian-cloud/debian-12"
       size  = 20
-      type  = "pd-balanced"
+      type  = "pd-standard"
     }
   }
 
