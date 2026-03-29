@@ -25,6 +25,9 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -33,6 +36,7 @@ jobs:
         with:
           context: .
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: |
             nathanzk/simple-mq:${{ steps.sha.outputs.short }}
             ${{ github.ref == 'refs/heads/main' && 'nathanzk/simple-mq:latest' || '' }}
@@ -70,11 +74,11 @@ jobs:
 
       - name: Deploy to VM
         run: |
-            gcloud compute ssh appuser@simple-mq-vm --zone=${{ vars.GCP_ZONE }} --command="
-              cd /opt/simple-mq &&
-              git pull &&
-              echo 'OTLP_ENDPOINT=${{ secrets.OTLP_ENDPOINT }}' > .env &&
-              echo 'OTLP_AUTH=${{ secrets.OTLP_AUTH }}' >> .env &&
-              docker pull nathanzk/simple-mq:latest &&
-              docker-compose up -d
-            "
+          gcloud compute ssh appuser@simple-mq-vm --zone=${{ vars.GCP_ZONE }} --command="
+            cd /opt/simple-mq &&
+            git pull &&
+            echo 'OTLP_ENDPOINT=${{ secrets.OTLP_ENDPOINT }}' > .env &&
+            echo 'OTLP_AUTH=${{ secrets.OTLP_AUTH }}' >> .env &&
+            docker pull nathanzk/simple-mq:latest &&
+            docker-compose up -d
+          "
