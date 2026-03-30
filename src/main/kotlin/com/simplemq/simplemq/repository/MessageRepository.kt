@@ -60,4 +60,38 @@ interface MessageRepository : JpaRepository<Message, UUID> {
     ): Message?
 
     fun findByMessageId(messageId: UUID): Message?
+
+    @Query(
+        value = "SELECT COUNT(*) FROM messages WHERE queue_id = CAST(:queueId AS uuid) AND visible_at > :now AND delivery_count > 0",
+        nativeQuery = true,
+    )
+    fun countInFlightMessages(
+        @Param("queueId") queueId: UUID,
+        @Param("now") now: LocalDateTime,
+    ): Long
+
+    @Query(
+        value = """
+            SELECT CASE 
+                WHEN EXISTS(
+                    SELECT 1 FROM messages 
+                    WHERE queue_id = CAST(:queueId AS uuid) 
+                    AND visible_at <= :now 
+                    AND delivery_count < :maxDeliveries
+                ) THEN 
+                    EXTRACT(EPOCH FROM (:now - MIN(created_at)))
+                ELSE 0.0 
+            END 
+            FROM messages 
+            WHERE queue_id = CAST(:queueId AS uuid) 
+            AND visible_at <= :now 
+            AND delivery_count < :maxDeliveries
+        """,
+        nativeQuery = true,
+    )
+    fun findOldestWaitingMessageAge(
+        @Param("queueId") queueId: UUID,
+        @Param("now") now: LocalDateTime,
+        @Param("maxDeliveries") maxDeliveries: Int,
+    ): Double
 }

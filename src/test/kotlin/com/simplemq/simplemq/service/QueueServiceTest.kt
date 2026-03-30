@@ -6,16 +6,18 @@ import com.simplemq.simplemq.entity.Message
 import com.simplemq.simplemq.entity.Queue
 import com.simplemq.simplemq.repository.MessageRepository
 import com.simplemq.simplemq.repository.QueueRepository
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.ArgumentCaptor
-import org.mockito.InjectMocks
 import org.mockito.Mock
 import org.mockito.junit.jupiter.MockitoExtension
 import org.mockito.junit.jupiter.MockitoSettings
@@ -40,8 +42,17 @@ class QueueServiceTest {
     @Mock
     private lateinit var messageRepository: MessageRepository
 
-    @InjectMocks
+    @Mock
+    private lateinit var metricsRegistrar: MetricsRegistrar
+
+    private val meterRegistry: MeterRegistry = SimpleMeterRegistry()
+
     private lateinit var queueService: QueueService
+
+    @BeforeEach
+    fun setUp() {
+        queueService = QueueService(queueRepository, messageRepository, metricsRegistrar, meterRegistry)
+    }
 
     @Test
     fun `createQueue should save queue with generated UUID and return response`() {
