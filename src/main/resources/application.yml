@@ -33,10 +33,15 @@ management:
         http.server.requests: true
       slo:
         http.server.requests: 50ms, 100ms, 200ms, 500ms, 1000ms, 2000ms
+  endpoint:
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        include: health,info,prometheus,metrics
 
 logging:
   level:
