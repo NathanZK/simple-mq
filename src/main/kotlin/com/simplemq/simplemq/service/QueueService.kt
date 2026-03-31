@@ -94,7 +94,7 @@ class QueueService(
             Message(
                 queueId = queueIdAsUUID,
                 data = request.data,
-                visibleAt = LocalDateTime.now().plusSeconds(queue.visibilityTimeout.toLong()),
+                visibleAt = LocalDateTime.now(),
             )
 
         val savedMessage = messageRepository.save(message)
