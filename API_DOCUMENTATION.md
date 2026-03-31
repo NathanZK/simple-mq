@@ -182,7 +182,7 @@ Retrieves and locks the next available message from the queue.
   "message": {
     "message_id": "uuid",
     "data": "string",
-    "visible_until": "datetime"
+    "invisible_until": "datetime"
   } | null
 }
 ```
@@ -198,7 +198,7 @@ curl -X GET http://localhost:8080/api/queues/550e8400-e29b-41d4-a716-44665544000
   "message": {
     "message_id": "770e8400-e29b-41d4-a716-446655440002",
     "data": "{\"orderId\": \"12345\", \"amount\": 99.99, \"customer\": \"John Doe\"}",
-    "visible_until": "2024-03-28T15:30:00"
+    "invisible_until": "2024-03-28T15:30:00"
   }
 }
 ```
