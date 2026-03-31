@@ -334,14 +334,14 @@ class QueueControllerTest {
         // Given
         val queueId = UUID.randomUUID()
         val messageId = UUID.randomUUID()
-        val visibleUntil = LocalDateTime.now().plusSeconds(30)
+        val invisibleUntil = LocalDateTime.now().plusSeconds(30)
         val expectedResponse =
             DequeueMessageResponse(
                 message =
                     DequeuedMessage(
                         message_id = messageId,
                         data = "test message data",
-                        visible_until = visibleUntil,
+                        invisible_until = invisibleUntil,
                     ),
             )
 
@@ -356,7 +356,7 @@ class QueueControllerTest {
             .andExpect(content().contentType(MediaType.APPLICATION_JSON))
             .andExpect(jsonPath("$.message.message_id").value(messageId.toString()))
             .andExpect(jsonPath("$.message.data").value("test message data"))
-            .andExpect(jsonPath("$.message.visible_until").exists())
+            .andExpect(jsonPath("$.message.invisible_until").exists())
 
         verify(queueService, times(1)).dequeueMessage(queueId.toString())
     }
@@ -420,14 +420,14 @@ class QueueControllerTest {
         // Given
         val queueId = UUID.randomUUID()
         val messageId = UUID.randomUUID()
-        val visibleUntil = LocalDateTime.now().plusSeconds(45)
+        val invisibleUntil = LocalDateTime.now().plusSeconds(45)
         val expectedResponse =
             DequeueMessageResponse(
                 message =
                     DequeuedMessage(
                         message_id = messageId,
                         data = "important order data",
-                        visible_until = visibleUntil,
+                        invisible_until = invisibleUntil,
                     ),
             )
 
@@ -445,7 +445,7 @@ class QueueControllerTest {
         assertTrue(result.contains("\"message\""))
         assertTrue(result.contains("\"message_id\""))
         assertTrue(result.contains("\"data\""))
-        assertTrue(result.contains("\"visible_until\""))
+        assertTrue(result.contains("\"invisible_until\""))
         assertTrue(result.contains(messageId.toString()))
         assertTrue(result.contains("important order data"))
 
@@ -472,7 +472,7 @@ class QueueControllerTest {
         assertTrue(result.contains("\"message\":null"))
         assertFalse(result.contains("\"message_id\""))
         assertFalse(result.contains("\"data\""))
-        assertFalse(result.contains("\"visible_until\""))
+        assertFalse(result.contains("\"invisible_until\""))
 
         verify(queueService, times(1)).dequeueMessage(queueId.toString())
     }
@@ -483,14 +483,14 @@ class QueueControllerTest {
         val queueId = UUID.randomUUID()
         val messageId = UUID.randomUUID()
         val messageData = "Message with special chars: \"quotes\", \n newlines, \t tabs, and emojis 🚀"
-        val visibleUntil = LocalDateTime.now().plusSeconds(60)
+        val invisibleUntil = LocalDateTime.now().plusSeconds(60)
         val expectedResponse =
             DequeueMessageResponse(
                 message =
                     DequeuedMessage(
                         message_id = messageId,
                         data = messageData,
-                        visible_until = visibleUntil,
+                        invisible_until = invisibleUntil,
                     ),
             )
 
@@ -504,7 +504,7 @@ class QueueControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.message.message_id").value(messageId.toString()))
             .andExpect(jsonPath("$.message.data").value(messageData))
-            .andExpect(jsonPath("$.message.visible_until").exists())
+            .andExpect(jsonPath("$.message.invisible_until").exists())
 
         verify(queueService, times(1)).dequeueMessage(queueId.toString())
     }
@@ -746,7 +746,7 @@ class QueueControllerTest {
         assertFalse(result.contains("\"queue_id\""))
         assertFalse(result.contains("\"data\""))
         assertFalse(result.contains("\"delivery_count\""))
-        assertFalse(result.contains("\"visible_until\""))
+        assertFalse(result.contains("\"invisible_until\""))
         assertTrue(result.contains(messageId.toString()))
 
         verify(queueService, times(1)).requeueMessage(messageId.toString(), queueId.toString())

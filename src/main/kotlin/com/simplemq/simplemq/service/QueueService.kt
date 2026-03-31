@@ -236,7 +236,7 @@ class QueueService(
                     DequeuedMessage(
                         message_id = message.messageId,
                         data = message.data,
-                        visible_until = newVisibleAt,
+                        invisible_until = newVisibleAt,
                     ),
             )
         } else {

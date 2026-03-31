@@ -10,5 +10,5 @@ data class DequeueMessageResponse(
 data class DequeuedMessage(
     val message_id: UUID,
     val data: String,
-    val visible_until: LocalDateTime,
+    val invisible_until: LocalDateTime,
 )

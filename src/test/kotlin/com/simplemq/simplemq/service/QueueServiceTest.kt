@@ -323,9 +323,9 @@ class QueueServiceTest {
         assertNotNull(response.message)
         assertEquals(messageId, response.message!!.message_id)
         assertEquals("test message", response.message!!.data)
-        // Check that visible_until is in the future (within reasonable range)
+        // Check that invisible_until is in the future (within reasonable range)
         val expectedVisibleTime = LocalDateTime.now().plusSeconds(30)
-        val actualVisibleTime = response.message!!.visible_until
+        val actualVisibleTime = response.message!!.invisible_until
         assertTrue(
             actualVisibleTime.isAfter(expectedVisibleTime.minusSeconds(5)) &&
                 actualVisibleTime.isBefore(expectedVisibleTime.plusSeconds(5)),
@@ -721,9 +721,9 @@ class QueueServiceTest {
 
         assertNotNull(response.message)
         assertEquals(messageId, response.message!!.message_id)
-        // Check that visible_until is in the future (within reasonable range)
+        // Check that invisible_until is in the future (within reasonable range)
         val expectedVisibleTime = LocalDateTime.now().plusSeconds(45)
-        val actualVisibleTime = response.message!!.visible_until
+        val actualVisibleTime = response.message!!.invisible_until
         assertTrue(
             actualVisibleTime.isAfter(expectedVisibleTime.minusSeconds(5)) &&
                 actualVisibleTime.isBefore(expectedVisibleTime.plusSeconds(5)),

@@ -200,7 +200,7 @@ Returns the next available message and marks it invisible for the duration of `v
 {
   "message_id": "msg_def456",
   "data": "string",
-  "visible_until": "2024-01-01T00:00:30Z"
+  "invisible_until": "2024-01-01T00:00:30Z"
 }
 ```
 
@@ -517,7 +517,7 @@ The complete sequence of operations for a single poll request, executed as one a
 
 4. **Return message to consumer**
 
-   Return `message_id`, `data`, and `visible_until` timestamp.
+   Return `message_id`, `data`, and `invisible_until` timestamp.
 
 If step 2 returns no rows, return `{ "message": null }` with status `200`.
 
