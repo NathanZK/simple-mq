@@ -73,4 +73,12 @@ class QueueController(
         val response = queueService.requeueMessage(message_id, queue_id)
         return ResponseEntity.ok(response)
     }
+
+    @DeleteMapping("/{queue_id}")
+    fun deleteQueue(
+        @PathVariable queue_id: String,
+    ): ResponseEntity<Void> {
+        queueService.deleteQueue(queue_id)
+        return ResponseEntity.ok().build()
+    }
 }

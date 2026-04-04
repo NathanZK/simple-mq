@@ -797,4 +797,51 @@ class QueueControllerTest {
 
         verify(queueService, times(1)).requeueMessage(messageId.toString(), destinationQueueId.toString())
     }
+
+    @Test
+    fun `deleteQueue should return 200 OK when queue is successfully deleted`() {
+        // Given
+        val queueId = UUID.randomUUID()
+
+        // When & Then
+        mockMvc.perform(
+            delete("/api/queues/{queue_id}", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+
+        verify(queueService, times(1)).deleteQueue(queueId.toString())
+    }
+
+    @Test
+    fun `deleteQueue should return 404 Not Found when queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        whenever(queueService.deleteQueue(queueId.toString())).thenThrow(IllegalArgumentException("Queue not found with ID: $queueId"))
+
+        // When & Then
+        mockMvc.perform(
+            delete("/api/queues/{queue_id}", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isNotFound())
+
+        verify(queueService, times(1)).deleteQueue(queueId.toString())
+    }
+
+    @Test
+    fun `deleteQueue should return 400 Bad Request for invalid queue ID format`() {
+        // Given
+        val invalidQueueId = "invalid-uuid-format"
+        whenever(queueService.deleteQueue(invalidQueueId)).thenThrow(IllegalArgumentException("Invalid UUID string: invalid-uuid-format"))
+
+        // When & Then
+        mockMvc.perform(
+            delete("/api/queues/{queue_id}", invalidQueueId)
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isBadRequest())
+
+        verify(queueService, times(1)).deleteQueue(invalidQueueId)
+    }
 }

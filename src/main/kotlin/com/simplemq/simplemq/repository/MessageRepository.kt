@@ -94,4 +94,13 @@ interface MessageRepository : JpaRepository<Message, UUID> {
         @Param("now") now: LocalDateTime,
         @Param("maxDeliveries") maxDeliveries: Int,
     ): Double
+
+    @Modifying
+    @Query(
+        value = "DELETE FROM messages WHERE queue_id = CAST(:queueId AS uuid)",
+        nativeQuery = true,
+    )
+    fun deleteAllByQueueId(
+        @Param("queueId") queueId: UUID,
+    )
 }
