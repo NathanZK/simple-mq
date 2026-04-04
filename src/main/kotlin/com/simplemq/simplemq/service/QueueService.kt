@@ -363,4 +363,32 @@ class QueueService(
             message_id = messageIdAsUUID,
         )
     }
+
+    @Transactional
+    fun deleteQueue(queueId: String) {
+        val queueIdAsUUID = UUID.fromString(queueId)
+
+        // Check if queue exists
+        queueRepository.findById(queueIdAsUUID)
+            .orElseThrow {
+                Counter.builder("simplemq.delete_queue.total")
+                    .tag("queue_id", queueId)
+                    .tag("outcome", "queue_not_found")
+                    .register(meterRegistry)
+                    .increment()
+                IllegalArgumentException("Queue not found with ID: $queueId")
+            }
+
+        // Delete all messages in the queue
+        messageRepository.deleteAllByQueueId(queueIdAsUUID)
+
+        // Delete the queue
+        queueRepository.deleteById(queueIdAsUUID)
+
+        Counter.builder("simplemq.delete_queue.total")
+            .tag("queue_id", queueId)
+            .tag("outcome", "success")
+            .register(meterRegistry)
+            .increment()
+    }
 }

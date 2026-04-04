@@ -1200,4 +1200,61 @@ class QueueServiceTest {
             visibleAt = any(),
         )
     }
+
+    @Test
+    fun `deleteQueue should successfully delete queue and its messages`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val queue =
+            Queue(
+                queueId = queueId,
+                queueName = "test-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 3,
+            )
+
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+
+        // When
+        queueService.deleteQueue(queueId.toString())
+
+        // Then
+        verify(messageRepository, times(1)).deleteAllByQueueId(queueId)
+        verify(queueRepository, times(1)).deleteById(queueId)
+    }
+
+    @Test
+    fun `deleteQueue should throw IllegalArgumentException when queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.empty())
+
+        // When & Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.deleteQueue(queueId.toString())
+            }
+
+        assertEquals("Queue not found with ID: $queueId", exception.message)
+        verify(messageRepository, never()).deleteAllByQueueId(any())
+        verify(queueRepository, never()).deleteById(any())
+    }
+
+    @Test
+    fun `deleteQueue should throw IllegalArgumentException for invalid UUID format`() {
+        // Given
+        val invalidQueueId = "invalid-uuid-format"
+
+        // When & Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.deleteQueue(invalidQueueId)
+            }
+
+        assertTrue(exception.message!!.contains("Invalid UUID string"))
+        verify(messageRepository, never()).deleteAllByQueueId(any())
+        verify(queueRepository, never()).deleteById(any())
+    }
 }
