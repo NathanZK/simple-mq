@@ -19,6 +19,8 @@ services:
   app:
     image: nathanzk/simple-mq:latest
     container_name: simple-mq-app
+    mem_limit: 600m
+    command: java -Xms384m -Xmx384m -XX:MaxMetaspaceSize=128m -jar app.jar
     ports:
       - "8080:8080"
     environment:
