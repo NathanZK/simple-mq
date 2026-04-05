@@ -18,8 +18,10 @@ A production-grade message queue service inspired by Amazon SQS. The application
   - [Visibility Timeout](#visibility-timeout)
   - [DLQ Routing](#dlq-routing)
   - [Poll Flow](#poll-flow)
+- [Observability](#observability)
+- [Load Testing](#load-testing)
 - [Known Limitations](#known-limitations)
-- [Future Improvements](#future-improvements)
+- [Deployment](#deployment)
 
 ---
 
@@ -44,6 +46,7 @@ This queue solves **temporal decoupling**: the producer and consumer do not need
 - Messages in the DLQ can be requeued back to the original queue after debugging
 - Multiple named queues are supported
 - Multiple consumer servers can poll from the same queue (competing consumers)
+- Queues can be deleted
 - No message ordering guarantees
 
 **Out of scope (v1):**
@@ -126,7 +129,7 @@ POST /api/queues
 The DLQ is created lazily — only when the first message is routed there. The DLQ ID is discoverable via the queue metadata endpoint.
 
 **Status codes**
-- `200` — queue created
+- `201` — queue created
 - `400` — invalid request
 
 ---
@@ -158,6 +161,20 @@ GET /api/queues/{queue_id}
 
 ---
 
+### Delete Queue
+
+```
+DELETE /api/queues/{queue_id}
+```
+
+Deletes the queue and all messages it contains.
+
+**Status codes**
+- `200` — queue deleted
+- `404` — queue not found
+
+---
+
 ### Enqueue
 
 ```
@@ -181,7 +198,7 @@ Message data is an opaque string. The producer is responsible for serialization 
 ```
 
 **Status codes**
-- `200` — message enqueued
+- `201` — message enqueued
 - `429` — queue is full (back pressure); producer should back off and retry
 - `404` — queue not found
 
@@ -270,28 +287,27 @@ Used after debugging a failed message and fixing the underlying issue.
 ## High Level Design
 
 ```
-Producer ──► Load Balancer ──► Queue Service (instance 1) ──►
-                          └──► Queue Service (instance 2) ──► PostgreSQL
-Consumer ──► Load Balancer ──► Queue Service (instance 1) ──►
-                          └──► Queue Service (instance 2) ──►
+Producer ──► Queue Service ──► PostgreSQL
+Consumer ──► Queue Service ──►
 ```
+
+### Current Deployment
+
+The service runs as a single instance on a GCP e2-micro (`us-central1-a`) with no load balancer. Both the queue service and PostgreSQL run as Docker containers managed by Docker Compose on the same VM. Infrastructure is provisioned via Terraform with GCS remote state.
 
 ### Components
 
 **Producer (external)**
-The producer is outside the system boundary. It calls the enqueue API and considers its responsibility complete once it receives a `200`. It does not wait for consumer acknowledgement — that is the point of temporal decoupling.
+The producer is outside the system boundary. It calls the enqueue API and considers its responsibility complete once it receives a `201`. It does not wait for consumer acknowledgement — that is the point of temporal decoupling.
 
 **Consumer (external)**
 The consumer is outside the system boundary. It polls the queue, processes messages, and acknowledges. Multiple consumer servers can poll the same queue simultaneously — the queue handles deduplication via row-level locking.
 
 **Queue Service**
-A monolith handling all API requests. Contains no background worker — DLQ routing and visibility timeout management happen at poll time (see Deep Dives). Multiple instances run behind a load balancer.
+A monolith handling all API requests. Contains no background worker — DLQ routing and visibility timeout management happen at poll time (see Deep Dives). Built as a multi-arch Docker image (`amd64` and `arm64`).
 
 **PostgreSQL**
-Persists all messages and queue state. Runs as a separate instance from the queue service so that a queue service crash does not take down storage.
-
-**Load Balancer**
-Routes traffic across queue service instances using least-connections routing. Provider-specific implementation determined during infrastructure setup.
+Persists all messages and queue state. Runs in a separate container from the queue service so that a queue service crash does not take down storage.
 
 ### Design Decisions
 
@@ -340,51 +356,23 @@ Note: Managed database services (e.g. AWS RDS) were considered but rejected. Usa
 
 ### Schema
 
-#### queues
+The schema has two tables: `queues` and `messages`.
 
-| Column | Type | Description |
-|---|---|---|
-| `queue_id` | VARCHAR PK | Unique identifier for the queue |
-| `queue_name` | VARCHAR | Human-readable name |
-| `queue_size` | INT | Maximum number of messages |
-| `visibility_timeout` | INT | Seconds a polled message stays invisible |
-| `max_deliveries` | INT | Maximum delivery attempts before DLQ routing |
-| `current_message_count` | INT | Live count of messages in the queue |
-| `parent_queue_id` | VARCHAR FK (nullable) | Set on DLQ rows; references the parent queue |
-| `created_at` | TIMESTAMP | Queue creation time |
-
-`parent_queue_id` is `NULL` for regular queues and set to the parent `queue_id` for DLQ queues. This allows the DLQ to be a first-class queue — it uses the same table, the same poll endpoint, and the same message table. No separate DLQ schema is needed.
+A DLQ is structurally identical to a regular queue — it lives in the same `queues` table and uses the same endpoints. The only distinction is that a queue with messages routed to a DLQ has a `dlq_id` set, referencing the DLQ queue row. `dlq_id` is `null` for queues that have never had a message fail.
 
 **Decision: Separate DLQ table vs single queues table**
 
-Option 1: Single table — DLQ rows live alongside regular queue rows. Distinguished by `parent_queue_id`.
-
-Option 2: Separate DLQ table — DLQ queues and regular queues stored in separate tables.
-
-Decision: **Single table.** A DLQ is structurally identical to a regular queue. The only distinction is that it has a parent. Separating them would require coordinating inserts across two tables, duplicate query logic, and additional joins. With a proper index on `queue_id`, query performance is identical regardless of co-location.
+A DLQ is a queue. Separating them into different tables would require coordinating inserts across two tables, duplicate query logic, and additional joins. With a proper index on `queue_id`, query performance is identical regardless of co-location. Single table wins.
 
 **current_message_count consistency**
 
 `current_message_count` is incremented on enqueue and decremented on acknowledgement. Both operations are wrapped in a transaction with the corresponding message insert or delete — either the message and the count update both succeed, or both fail. A failed transaction surfaces as an error to the caller, who retries. This is acceptable under at-least-once delivery semantics.
 
-#### messages
+**delivery_count**
 
-| Column | Type | Description |
-|---|---|---|
-| `message_id` | VARCHAR PK | Unique identifier for the message |
-| `queue_id` | VARCHAR FK | The queue this message belongs to |
-| `data` | TEXT | Opaque message payload |
-| `delivery_count` | INT | Number of times this message has been delivered |
-| `visible_at` | TIMESTAMP | Message is eligible for polling when `visible_at <= NOW()` |
-| `created_at` | TIMESTAMP | Message creation time |
+`delivery_count` starts at 0 when a message is enqueued and is incremented on every delivery including the first. `retry_count` was considered as the column name but rejected — incrementing on first delivery makes the name semantically incorrect. The DLQ routing condition is `delivery_count >= max_deliveries`.
 
-**Decision: delivery_count naming and initial value**
-
-`delivery_count` starts at 0 when a message is enqueued. It is incremented on every delivery — including the first. This avoids the need to distinguish first delivery from subsequent deliveries, which would require an additional boolean column.
-
-`retry_count` was considered as the column name but rejected — incrementing on first delivery makes the name semantically incorrect. `delivery_count` accurately reflects what is being measured. The DLQ condition is `delivery_count >= max_deliveries`.
-
-**Decision: visible_at initial value**
+**visible_at**
 
 When a message is enqueued, `visible_at` is set to `NOW()`. The message is immediately eligible for polling. No separate "enqueued" state is needed.
 
@@ -399,18 +387,11 @@ ON messages (queue_id, visible_at, delivery_count, created_at);
 
 **Decision: Index strategy**
 
-Option 1: **Single column index on queue_id**
-Narrows to the correct queue instantly but leaves PostgreSQL filtering on `visible_at`, `delivery_count`, and sorting by `created_at` in memory. As queue depth grows, this becomes a full scan within the queue. Poll latency degrades proportionally with queue depth.
+The poll query always filters on all four columns in the same order. A composite index matches the exact access pattern — `queue_id` eliminates most rows immediately, `visible_at` filters expired timeouts, `delivery_count` filters DLQ candidates, `created_at` satisfies the ORDER BY without a separate sort step. Poll latency stays flat regardless of queue depth.
 
-Option 2: **Four separate indexes** (one per column)
-Useful when queries access each column independently. In this system, the poll query always uses all four columns together. Four separate indexes means four index structures to maintain on every insert and delete, with no query performance benefit over a single composite index for the dominant access pattern.
+Four separate indexes would require maintaining four index structures on every insert and delete with no query performance benefit for this access pattern. A single-column index on `queue_id` alone would degrade under deep queues.
 
-Option 3: **Composite index on (queue_id, visible_at, delivery_count, created_at)**
-Matches the exact poll query. PostgreSQL walks the index in column order — `queue_id` eliminates most rows immediately, `visible_at` filters expired timeouts, `delivery_count` filters DLQ candidates, `created_at` satisfies the ORDER BY without a separate sort step. Poll latency stays flat regardless of queue depth.
-
-Decision: **Composite index.** The poll query is the dominant and most frequent access pattern. It always uses all four columns in the same order. A composite index is cheaper to maintain than four separate indexes and delivers better query performance for this specific pattern.
-
-Tradeoff: Composite indexes are not free. Every insert and delete must update the index. For a balanced read/write ratio this is acceptable. Benchmark with `EXPLAIN ANALYZE` if latency optimization becomes a priority — it may be worth dropping to a two-column index on `(queue_id, visible_at)` and accepting in-memory filtering for the remaining columns.
+Tradeoff: every insert and delete must update the composite index. For a balanced read/write ratio this is acceptable. If latency optimization becomes a priority, dropping to `(queue_id, visible_at)` and accepting in-memory filtering for the remaining columns is worth benchmarking with `EXPLAIN ANALYZE`.
 
 ---
 
@@ -418,25 +399,13 @@ Tradeoff: Composite indexes are not free. Every insert and delete must update th
 
 Multiple consumer servers can poll the same queue simultaneously. Without coordination, two servers could receive the same message.
 
-The queue uses PostgreSQL's `SELECT FOR UPDATE SKIP LOCKED`:
-
-```sql
-SELECT * FROM messages
-WHERE queue_id = $1
-AND visible_at <= NOW()
-AND delivery_count < $2
-ORDER BY created_at ASC
-LIMIT 1
-FOR UPDATE SKIP LOCKED;
-```
-
-`FOR UPDATE` locks the selected row for the duration of the transaction. `SKIP LOCKED` means if a row is already locked by another transaction, skip it and move to the next eligible row — do not wait.
+The queue uses PostgreSQL's `SELECT FOR UPDATE SKIP LOCKED`. `FOR UPDATE` locks the selected row for the duration of the transaction. `SKIP LOCKED` means if a row is already locked by another transaction, skip it and move to the next eligible row — do not wait.
 
 Without `SKIP LOCKED`, competing consumers would block on each other, serializing throughput. `SKIP LOCKED` allows multiple consumers to make progress simultaneously without coordination overhead.
 
-Reference: [PostgreSQL documentation on SKIP LOCKED](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE)
-
 This is one of the strongest arguments for PostgreSQL over document databases for this use case — MongoDB does not have an equivalent primitive. Implementing the same guarantee in MongoDB would require application-level optimistic concurrency.
+
+Reference: [PostgreSQL documentation on SKIP LOCKED](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE)
 
 ---
 
@@ -446,7 +415,7 @@ When a consumer polls a message, `visible_at` is set to `NOW() + visibility_time
 
 If the consumer acknowledges the message, it is deleted. If the consumer crashes, is slow, or fails to acknowledge — the message resurfaces automatically when `visible_at <= NOW()` becomes true again. No background worker is needed. No explicit reset is required. The next poll query picks it up.
 
-When a message resurfaces, `delivery_count` is incremented on the next delivery. If `delivery_count >= max_deliveries`, it is routed to the DLQ at poll time (see DLQ Routing).
+When a message resurfaces, `delivery_count` is incremented on the next delivery. If `delivery_count >= max_deliveries`, it is routed to the DLQ at poll time.
 
 ---
 
@@ -454,115 +423,161 @@ When a message resurfaces, `delivery_count` is incremented on the next delivery.
 
 **Decision: Background worker vs routing at poll time**
 
-Option 1: **Routing at poll time**
-When a consumer polls, the queue first moves any eligible messages (those where `delivery_count >= max_deliveries` and `visible_at <= NOW()`) to the DLQ, then fetches the next valid message. No background worker. Two queries per poll request.
+Option 1: **Routing at poll time** — when a consumer polls, the queue first moves any eligible messages to the DLQ, then fetches the next valid message. No background worker. Two queries per poll request.
 
-Tradeoff: Messages only reach the DLQ when a consumer is actively polling. If there are no active consumers, messages remain in the main queue past their delivery limit. Minor additional latency per poll request.
+Option 2: **Background worker** — a dedicated process runs on a schedule and moves expired messages to the DLQ independently of polling activity.
 
-Option 2: **Background worker**
-A dedicated process runs on a schedule and moves expired messages to the DLQ independently of polling activity.
-
-Tradeoff: Adds operational complexity — the worker must be deployed, monitored, and its run frequency tuned. Run it too infrequently and the DLQ is stale anyway; run it too frequently and it consumes free tier resources. Critically: even with a background worker, there is a window between runs where a message that should be in the DLQ is still visible to consumers. The fundamental problem exists in both options.
-
-Decision: **Routing at poll time.** The stale DLQ window exists in both approaches. The background worker adds resource cost and operational complexity with no meaningful improvement to the core problem. Given that free tier resources are constrained and latency is not the primary non-functional requirement, polling-time routing wins. Revisit if latency optimization becomes a priority — at that point, a background worker could be justified to remove the two-query overhead from the poll path.
+The stale DLQ window exists in both approaches — messages only reach the DLQ when either a consumer polls or the background worker runs. The background worker adds resource cost and operational complexity with no meaningful improvement to the core problem. Polling-time routing wins. Revisit if the two-query overhead becomes a measurable latency concern.
 
 **DLQ creation**
 
-The DLQ is created lazily — only when the first message is routed there. Creating it eagerly on queue creation allocates resources for a failure path that may never be used. The DLQ ID is returned by the queue metadata endpoint once it exists.
+The DLQ is created lazily — only when the first message is routed there. Creating it eagerly on queue creation allocates resources for a failure path that may never be used.
+
+`delivery_count` is intentionally not reset when routing to the DLQ. The count reflects how many delivery attempts were made before failure — useful for debugging.
 
 ---
 
 ### Poll Flow
 
-The complete sequence of operations for a single poll request, executed as one atomic transaction:
+The complete sequence for a single poll request, executed as one atomic transaction:
 
-1. **Route expired messages to DLQ**
-
-   ```sql
-   -- Fetch DLQ queue_id for this queue
-   SELECT queue_id FROM queues WHERE parent_queue_id = $queue_id;
-
-   -- Move eligible messages
-   UPDATE messages
-   SET queue_id = $dlq_queue_id
-   WHERE queue_id = $queue_id
-   AND visible_at <= NOW()
-   AND delivery_count >= $max_deliveries;
-   ```
-
-   If the DLQ does not exist yet, create it first (lazy creation).
-
-   `delivery_count` is intentionally not reset when routing to the DLQ. The count reflects how many delivery attempts were made before failure — useful for debugging. The DLQ is a diagnostic tool; preserving the delivery history is intentional.
-
-2. **Fetch the next valid message**
-
-   ```sql
-   SELECT * FROM messages
-   WHERE queue_id = $queue_id
-   AND visible_at <= NOW()
-   AND delivery_count < $max_deliveries
-   ORDER BY created_at ASC
-   LIMIT 1
-   FOR UPDATE SKIP LOCKED;
-   ```
-
-3. **Increment delivery_count and set visibility timeout**
-
-   ```sql
-   UPDATE messages
-   SET delivery_count = delivery_count + 1,
-       visible_at = NOW() + INTERVAL '$visibility_timeout seconds'
-   WHERE message_id = $message_id;
-   ```
-
-4. **Return message to consumer**
-
-   Return `message_id`, `data`, and `invisible_until` timestamp.
+1. Move any messages where `delivery_count >= max_deliveries` and `visible_at <= NOW()` to the DLQ. If the DLQ does not exist yet, create it first.
+2. Fetch the next valid message using `SELECT FOR UPDATE SKIP LOCKED`.
+3. Increment `delivery_count` and set `visible_at = NOW() + visibility_timeout`.
+4. Return `message_id`, `data`, and `invisible_until` to the consumer.
 
 If step 2 returns no rows, return `{ "message": null }` with status `200`.
 
 **DLQ full behavior**
 
-If the DLQ has reached `queue_size`, messages that would be routed to the DLQ remain in the main queue. This causes main queue depth to grow, which triggers the saturation metric and alerts the operator. This is intentional — it forces the issue to be visible rather than silently dropping messages. The operator must drain the DLQ before the system returns to normal operation.
+If the DLQ has reached `queue_size`, messages that would be routed there remain in the main queue. Main queue depth grows, which triggers the saturation metric and alerts the operator. This is intentional — it forces the issue to be visible rather than silently dropping messages.
+
+---
+
+## Observability
+
+Live dashboard: [Grafana Cloud — Four Golden Signals](https://nathanzk.grafana.net/public-dashboards/61234e232e854734bd240e7a5b0cb00b?from=now-3h&to=now&timezone=browser)
+
+### Metrics
+
+Custom Micrometer instrumentation pushes metrics to Grafana Cloud via OTLP every 60 seconds.
+
+**Service-layer counters (per queue, per outcome)**
+- `simplemq.enqueue.total` — enqueue attempts tagged by `outcome` (success, queue_full, queue_not_found)
+- `simplemq.dequeue.total` — dequeue attempts tagged by `outcome`
+- `simplemq.ack.total` — acknowledgement attempts tagged by `outcome`
+- `simplemq.requeue.total` — requeue attempts tagged by `outcome`
+
+**DB-backed gauges (per queue, sampled on push interval)**
+- `simplemq.queue.depth` — current message count per queue
+- `simplemq.queue.inflight` — messages currently invisible (delivered but not acknowledged)
+- `simplemq.queue.oldest_message_age_seconds` — age of the oldest unprocessed message
+
+### Synthetic Monitoring
+
+Two k6 scripts run on Grafana Cloud at regular intervals:
+
+- `happy-path.js` — runs every 5 minutes from two probe locations. Creates a queue, enqueues a message, dequeues it, ACKs it, and deletes the queue.
+- `dlq.js` — runs every 15 minutes. Creates a queue with `maxDeliveries=1`, enqueues a message, lets the visibility timeout expire, verifies the message is routed to the DLQ, and cleans up.
+
+Both scripts create and delete their queues within each run to prevent queue accumulation.
+
+### Alerting
+
+A Grafana alert fires when `probe_success{job="simple_mq_happy_path"}` drops below 1 for 5 consecutive minutes. Notifications are delivered via Telegram.
+
+### Incident History
+
+**April 2, 2026 — OOM kill**
+
+The JVM had no heap limit configured. Under normal operation, OS + PostgreSQL + JVM exceeded the 1GB VM memory ceiling. The kernel OOM killer fired and killed the Java process. The outage went undetected for ~2 days due to no alerting being configured at the time.
+
+Remediation: 1GB swapfile added, JVM flags set to `-Xms384m -Xmx384m -XX:MaxMetaspaceSize=128m`, Docker `mem_limit: 600m` added, Grafana alerting configured.
+
+---
+
+## Load Testing
+
+A k6 load test was run against the production VM via Grafana Cloud k6 — 10 VUs, 3 minutes, 15 queues, Columbus load zone. Each VU looped enqueue → dequeue → ACK against a randomly selected queue for the full duration.
+
+### Results
+
+| Metric | Value |
+|---|---|
+| Total requests | 8,532 |
+| HTTP failures | 0 |
+| Peak RPS | 190 |
+| Sustained RPS | ~30 |
+| P99 latency | 1,015ms (enqueue) |
+
+### Findings
+
+The service handled all requests without errors. Effective throughput was limited by JVM GC pressure on a heap-constrained VM.
+
+**Primary bottleneck: GC stop-the-world pauses.** Eden space filled to 96MB under sustained load from request/response object allocation. A 486ms stop-the-world pause froze all request handlers simultaneously, causing latency to spike across every endpoint. Coinciding with the pause, GCP CPU utilization spiked above 400% of the VM's 0.25 vCPU allocation as the VM burst to complete GC while serving requests. Effective concurrency collapsed from 10 VUs to ~2 during this period.
+
+**Recovery was clean.** Latency returned to baseline immediately after the load test ended — no OOM, no connection pool exhaustion, no runaway state.
+
+**GC algorithm comparison.** Serial GC was evaluated as an alternative. It performed worse — P99 increased and peak RPS dropped from 190 to 173. Serial GC is designed for single-threaded batch workloads; under concurrent load the single-threaded collector takes longer to clear Eden than the default Parallel GC. Reverted.
+
+### Context
+
+The `-Xmx384m` heap ceiling was set deliberately to prevent OOM on a 1GB VM shared with PostgreSQL and the OS. This keeps the service stable under normal operation at the cost of throughput under sustained load. On production-grade hardware the same codebase would sustain significantly higher throughput with lower and more consistent latency.
 
 ---
 
 ## Known Limitations
 
-- **Single PostgreSQL instance**: PostgreSQL is a single point of failure in v1. If the database goes down, the queue is unavailable. A primary-replica setup with automatic failover is the path to high availability but requires additional compute beyond free tier.
+- **Single PostgreSQL instance:** PostgreSQL is a single point of failure. If the database goes down, the queue is unavailable. A primary-replica setup with automatic failover is the path to high availability but requires additional compute beyond free tier.
 
-- **No ordering guarantees**: Messages are returned in approximate creation order but this is not guaranteed under concurrent load. Strict FIFO ordering at scale requires coordination that significantly reduces throughput.
+- **Single VM, no load balancer:** The service runs as a single instance with no horizontal scaling. Adding instances requires a load balancer and a shared PostgreSQL instance.
 
-- **DLQ only updated on active polling**: If no consumers are polling, messages exceeding `max_deliveries` remain in the main queue until the next poll. This is a known tradeoff of routing at poll time vs a background worker.
+- **Throughput ceiling on e2-micro:** Sustained load triggers GC pressure due to the 384MB heap ceiling. Sustained throughput under 10 concurrent users is approximately 30 req/sec. This is a hardware constraint, not an application design constraint.
 
-- **No batching**: Poll returns one message per request. Batch polling (`?limit=N`) is a planned extension.
+- **No DLQ polling:** There is currently no way to poll messages directly from a DLQ. Messages can be requeued to the parent queue via the requeue endpoint, but direct DLQ consumption is not supported.
 
-- **No queue limits per operator**: The number of queues an operator can create is currently unlimited. Rate limiting is a planned extension.
+- **No ordering guarantees:** Messages are returned in approximate creation order but this is not guaranteed under concurrent load.
+
+- **DLQ only updated on active polling:** If no consumers are polling, messages exceeding `max_deliveries` remain in the main queue until the next poll. This is a known tradeoff of routing at poll time vs a background worker.
+
+- **No batching:** Poll returns one message per request. Batch polling (`?limit=N`) is a planned extension.
+
+- **No queue limits per operator:** The number of queues an operator can create is currently unlimited.
 
 ---
 
 ## Deployment
 
+### Infrastructure
+
+- **Cloud:** GCP `us-central1-a`
+- **VM:** e2-micro (0.25 vCPU, 1GB RAM)
+- **Swap:** 1GB swapfile at `/swapfile`, persistent via `/etc/fstab`
+- **Runtime:** Docker Compose
+- **Provisioning:** Terraform with GCS remote state
+- **Image:** `nathanzk/simple-mq:latest` (multi-arch: `amd64`, `arm64`)
+
+### JVM Configuration
+
+```
+-Xms384m -Xmx384m -XX:MaxMetaspaceSize=128m
+```
+
+Heap is capped at 384MB to prevent OOM on the 1GB VM. Docker `mem_limit` is set to 600MB as a hard ceiling at the container level.
+
 ### CI/CD
 
-This project uses GitHub Actions for continuous integration and deployment:
+GitHub Actions handles CI and CD:
 
-- **CI**: Runs on pull requests to `main` - executes tests and code style checks
-- **CD**: Runs on pushes to any branch - builds and pushes Docker images
+- **CI:** Runs on pull requests to `main` — executes tests and code style checks
+- **CD:** Runs on pushes to `main` — builds multi-arch Docker image and pushes to Docker Hub
+
+Keyless GCP authentication via Workload Identity Federation — no long-lived credentials stored in GitHub secrets.
 
 #### Required GitHub Secrets
 
-Set these in your GitHub repository settings:
-
-- `DOCKERHUB_USERNAME`: Your Docker Hub username
-- `DOCKERHUB_TOKEN`: Your Docker Hub access token
-
-#### Docker Images
-
-Images are automatically built and pushed to Docker Hub:
-
-- `nathanzk/simple-mq:{short-sha}`: Tagged with commit SHA
-- `nathanzk/simple-mq:latest`: Latest version (only on main branch)
+- `DOCKERHUB_USERNAME` — Docker Hub username
+- `DOCKERHUB_TOKEN` — Docker Hub access token
 
 #### Manual Docker Build
 
@@ -573,15 +588,3 @@ docker build -t nathanzk/simple-mq:latest .
 # Run the container
 docker run -p 8080:8080 nathanzk/simple-mq:latest
 ```
-
----
-
-## Future Improvements
-
-- PostgreSQL primary-replica with automatic failover
-- Batch polling (`GET /api/queues/{queue_id}/messages?limit=N`)
-- Queue creation rate limiting per operator
-- Queue size enforcement with configurable back-pressure behavior
-- Background worker for DLQ routing (evaluate against polling-time latency benchmarks)
-- Message ordering (FIFO queue type with tradeoff documentation)
-- Metrics endpoint (`/metrics`) for Prometheus scraping
