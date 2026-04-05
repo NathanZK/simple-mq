@@ -1,7 +1,7 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
-const BASE_URL = 'http://localhost:8080';
+const BASE_URL = 'http://34.59.35.212:8080';
 
 export const options = {
   vus: 1,
@@ -13,14 +13,14 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 export default function () {
   // Step 1: Create queue
   const createRes = http.post(
-    `${BASE_URL}/api/queues`,
-    JSON.stringify({
-      queueName: `synthetic-happy-${Date.now()}`,
-      queueSize: 100,
-      visibilityTimeout: 30,
-      maxDeliveries: 3,
-    }),
-    { headers: { 'Content-Type': 'application/json' } }
+      `${BASE_URL}/api/queues`,
+      JSON.stringify({
+        queueName: `synthetic-happy-${Date.now()}`,
+        queueSize: 100,
+        visibilityTimeout: 30,
+        maxDeliveries: 3,
+      }),
+      { headers: { 'Content-Type': 'application/json' } }
   );
 
   console.log('create queue response:', createRes.body);
@@ -35,9 +35,9 @@ export default function () {
 
   // Step 2: Enqueue message
   const enqueueRes = http.post(
-    `${BASE_URL}/api/queues/${queueId}/messages`,
-    JSON.stringify({ data: 'synthetic-test-message' }),
-    { headers: { 'Content-Type': 'application/json' } }
+      `${BASE_URL}/api/queues/${queueId}/messages`,
+      JSON.stringify({ data: 'synthetic-test-message' }),
+      { headers: { 'Content-Type': 'application/json' } }
   );
 
   console.log('enqueue response:', enqueueRes.body);
@@ -70,5 +70,14 @@ export default function () {
 
   check(ackRes, {
     'ack status 200': (r) => r.status === 200,
+  });
+
+  // Step 5: Delete queue
+  const deleteQueueRes = http.del(`${BASE_URL}/api/queues/${queueId}`);
+
+  console.log('delete queue response:', deleteQueueRes.body);
+
+  check(deleteQueueRes, {
+    'delete queue status 200': (r) => r.status === 200,
   });
 }
