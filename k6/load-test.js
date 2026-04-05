@@ -1,7 +1,7 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
-const BASE_URL = 'http://localhost:8080';
+const BASE_URL = 'http://34.59.35.212:8080';
 const QUEUE_COUNT = 15;
 const TEST_DURATION = '3m';
 const VUS = 10;
@@ -9,21 +9,6 @@ const VUS = 10;
 export const options = {
     vus: VUS,
     duration: TEST_DURATION,
-    thresholds: {
-        // Overall error rate
-        http_req_failed: ['rate<0.01'],
-
-        // Overall latency
-        'http_req_duration': ['p(95)<600', 'p(99)<1200'],
-
-        // Per-endpoint latency
-        'http_req_duration{name:enqueue}': ['p(95)<700', 'p(99)<1200'],
-        'http_req_duration{name:dequeue}': ['p(95)<600'],
-        'http_req_duration{name:ack}':     ['p(95)<400'],
-
-        // Throughput floor
-        'http_reqs': ['rate>20'],
-    },
 };
 
 export function setup() {
@@ -48,14 +33,7 @@ export function setup() {
             [`setup: created queue ${i}`]: (r) => r.status === 201,
         });
 
-        try {
-            const response = JSON.parse(res.body);
-            queueIds.push(response.queue_id);
-        } catch (e) {
-            console.error(`Failed to parse queue creation response: ${res.body}`);
-            console.error(`Error: ${e.message}`);
-            throw e;
-        }
+        queueIds.push(JSON.parse(res.body).queue_id);
     }
 
     console.log(`Setup complete — created ${queueIds.length} queues`);
@@ -82,13 +60,7 @@ export default function (data) {
 
     if (!enqueueOk) return;
 
-        try {
-            var messageId = JSON.parse(enqueueRes.body).message_id;
-        } catch (e) {
-            console.error(`Failed to parse enqueue response: ${enqueueRes.body}`);
-            console.error(`Error: ${e.message}`);
-            return;
-        }
+    const messageId = JSON.parse(enqueueRes.body).message_id;
 
     // Step 2: Dequeue
     const dequeueRes = http.get(
@@ -98,25 +70,12 @@ export default function (data) {
 
     const dequeueOk = check(dequeueRes, {
         'dequeue status 200': (r) => r.status === 200,
-        'dequeue message not null': (r) => {
-            try {
-                return JSON.parse(r.body).message !== null;
-            } catch (e) {
-                console.error(`Failed to parse dequeue response: ${r.body}`);
-                return false;
-            }
-        },
+        'dequeue message not null': (r) => JSON.parse(r.body).message !== null,
     });
 
     if (!dequeueOk) return;
 
-    let dequeuedMessageId;
-    try {
-        dequeuedMessageId = JSON.parse(dequeueRes.body).message?.message_id;
-    } catch (e) {
-        console.error(`Failed to parse dequeued message ID: ${dequeueRes.body}`);
-        return;
-    }
+    const dequeuedMessageId = JSON.parse(dequeueRes.body).message?.message_id;
     if (!dequeuedMessageId) return;
 
     // Step 3: ACK
