@@ -68,4 +68,10 @@ class MetricsRegistrar(
 
         registeredGauges[queueId] = gauges
     }
+
+    fun deregisterGaugesForQueue(queueId: UUID) {
+        registeredGauges.remove(queueId)?.forEach { gauge ->
+            meterRegistry.remove(gauge)
+        }
+    }
 }

@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDateTime
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 @Service
 class QueueService(
@@ -25,6 +26,26 @@ class QueueService(
     private val metricsRegistrar: MetricsRegistrar,
     private val meterRegistry: MeterRegistry,
 ) {
+    private val counterCache = ConcurrentHashMap<String, Counter>()
+
+    private fun incrementCounter(
+        name: String,
+        queueId: String,
+        outcome: String,
+    ) {
+        val key = "$name:$queueId:$outcome"
+        val counter =
+            counterCache.computeIfAbsent(
+                key,
+            ) {
+                Counter.builder(name)
+                    .tag("queue_id", queueId)
+                    .tag("outcome", outcome)
+                    .register(meterRegistry)
+            }
+        counter.increment()
+    }
+
     fun createQueue(request: CreateQueueRequest): CreateQueueResponse {
         val queue =
             Queue(
@@ -71,21 +92,13 @@ class QueueService(
         val queue =
             queueRepository.findById(queueIdAsUUID)
                 .orElseThrow {
-                    Counter.builder("simplemq.enqueue.total")
-                        .tag("queue_id", queueId)
-                        .tag("outcome", "queue_not_found")
-                        .register(meterRegistry)
-                        .increment()
+                    incrementCounter("simplemq.enqueue.total", queueId, "queue_not_found")
                     IllegalArgumentException("Queue not found with ID: $queueId")
                 }
 
         // Check queue capacity
         if (queue.currentMessageCount >= queue.queueSize) {
-            Counter.builder("simplemq.enqueue.total")
-                .tag("queue_id", queueId)
-                .tag("outcome", "queue_full")
-                .register(meterRegistry)
-                .increment()
+            incrementCounter("simplemq.enqueue.total", queueId, "queue_full")
             throw IllegalStateException("Queue is full (capacity: ${queue.queueSize}, current: ${queue.currentMessageCount})")
         }
 
@@ -103,11 +116,7 @@ class QueueService(
         val updatedQueue = queue.copy(currentMessageCount = queue.currentMessageCount + 1)
         queueRepository.save(updatedQueue)
 
-        Counter.builder("simplemq.enqueue.total")
-            .tag("queue_id", queueId)
-            .tag("outcome", "success")
-            .register(meterRegistry)
-            .increment()
+        incrementCounter("simplemq.enqueue.total", queueId, "success")
 
         return EnqueueMessageResponse(savedMessage.messageId)
     }
@@ -122,11 +131,7 @@ class QueueService(
             queueRepository
                 .findById(queueIdAsUUID)
                 .orElseThrow {
-                    Counter.builder("simplemq.dequeue.total")
-                        .tag("queue_id", queueId)
-                        .tag("outcome", "queue_not_found")
-                        .register(meterRegistry)
-                        .increment()
+                    incrementCounter("simplemq.dequeue.total", queueId, "queue_not_found")
                     IllegalArgumentException("Queue not found with ID: $queueId")
                 }
 
@@ -225,11 +230,7 @@ class QueueService(
                 visibleAt = newVisibleAt,
             )
 
-            Counter.builder("simplemq.dequeue.total")
-                .tag("queue_id", queueId)
-                .tag("outcome", "success")
-                .register(meterRegistry)
-                .increment()
+            incrementCounter("simplemq.dequeue.total", queueId, "success")
 
             DequeueMessageResponse(
                 message =
@@ -240,11 +241,7 @@ class QueueService(
                     ),
             )
         } else {
-            Counter.builder("simplemq.dequeue.total")
-                .tag("queue_id", queueId)
-                .tag("outcome", "empty")
-                .register(meterRegistry)
-                .increment()
+            incrementCounter("simplemq.dequeue.total", queueId, "empty")
 
             DequeueMessageResponse(message = null)
         }
@@ -266,11 +263,7 @@ class QueueService(
         // Check if message exists and belongs to the specified queue
         messageRepository.findByMessageIdAndQueueId(messageIdAsUUID, queueIdAsUUID)
             ?: run {
-                Counter.builder("simplemq.ack.total")
-                    .tag("queue_id", queueId)
-                    .tag("outcome", "message_not_found")
-                    .register(meterRegistry)
-                    .increment()
+                incrementCounter("simplemq.ack.total", queueId, "message_not_found")
                 throw IllegalArgumentException("Message not found")
             }
 
@@ -281,11 +274,7 @@ class QueueService(
         val updatedQueue = queue.copy(currentMessageCount = queue.currentMessageCount - 1)
         queueRepository.save(updatedQueue)
 
-        Counter.builder("simplemq.ack.total")
-            .tag("queue_id", queueId)
-            .tag("outcome", "success")
-            .register(meterRegistry)
-            .increment()
+        incrementCounter("simplemq.ack.total", queueId, "success")
     }
 
     @Transactional
@@ -300,11 +289,7 @@ class QueueService(
         val message =
             messageRepository.findByMessageId(messageIdAsUUID)
                 ?: run {
-                    Counter.builder("simplemq.requeue.total")
-                        .tag("queue_id", queueId)
-                        .tag("outcome", "message_not_found")
-                        .register(meterRegistry)
-                        .increment()
+                    incrementCounter("simplemq.requeue.total", queueId, "message_not_found")
                     throw IllegalArgumentException("Message not found")
                 }
 
@@ -317,21 +302,13 @@ class QueueService(
         val destinationQueue =
             queueRepository.findById(queueIdAsUUID)
                 .orElseThrow {
-                    Counter.builder("simplemq.requeue.total")
-                        .tag("queue_id", queueId)
-                        .tag("outcome", "queue_not_found")
-                        .register(meterRegistry)
-                        .increment()
+                    incrementCounter("simplemq.requeue.total", queueId, "queue_not_found")
                     IllegalArgumentException("Queue not found with ID: $queueId")
                 }
 
         // Check destination queue capacity
         if (destinationQueue.currentMessageCount >= destinationQueue.queueSize) {
-            Counter.builder("simplemq.requeue.total")
-                .tag("queue_id", queueId)
-                .tag("outcome", "queue_full")
-                .register(meterRegistry)
-                .increment()
+            incrementCounter("simplemq.requeue.total", queueId, "queue_full")
             throw IllegalStateException(
                 "Destination queue is full (capacity: ${destinationQueue.queueSize}, current: ${destinationQueue.currentMessageCount})",
             )
@@ -353,11 +330,7 @@ class QueueService(
         queueRepository.save(updatedSourceQueue)
         queueRepository.save(updatedDestinationQueue)
 
-        Counter.builder("simplemq.requeue.total")
-            .tag("queue_id", queueId)
-            .tag("outcome", "success")
-            .register(meterRegistry)
-            .increment()
+        incrementCounter("simplemq.requeue.total", queueId, "success")
 
         return EnqueueMessageResponse(
             message_id = messageIdAsUUID,
@@ -371,11 +344,7 @@ class QueueService(
         // Check if queue exists
         queueRepository.findById(queueIdAsUUID)
             .orElseThrow {
-                Counter.builder("simplemq.delete_queue.total")
-                    .tag("queue_id", queueId)
-                    .tag("outcome", "queue_not_found")
-                    .register(meterRegistry)
-                    .increment()
+                incrementCounter("simplemq.delete_queue.total", queueId, "queue_not_found")
                 IllegalArgumentException("Queue not found with ID: $queueId")
             }
 
@@ -385,10 +354,9 @@ class QueueService(
         // Delete the queue
         queueRepository.deleteById(queueIdAsUUID)
 
-        Counter.builder("simplemq.delete_queue.total")
-            .tag("queue_id", queueId)
-            .tag("outcome", "success")
-            .register(meterRegistry)
-            .increment()
+        // Deregister gauges for the deleted queue
+        metricsRegistrar.deregisterGaugesForQueue(queueIdAsUUID)
+
+        incrementCounter("simplemq.delete_queue.total", queueId, "success")
     }
 }
