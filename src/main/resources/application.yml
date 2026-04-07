@@ -45,6 +45,6 @@ management:
 
 logging:
   level:
-    com.simplemq: DEBUG
-    org.springframework.web: DEBUG
-    org.hibernate.SQL: DEBUG
+    com.simplemq: INFO
+    org.springframework.web: WARN
+    org.hibernate.SQL: WARN
