@@ -1,4 +1,6 @@
 # simple-mq
+[![CI](https://github.com/nathanzk/simple-mq/actions/workflows/ci.yml/badge.svg)](https://github.com/nathanzk/simple-mq/actions)
+[![CD](https://github.com/nathanzk/simple-mq/actions/workflows/cd.yml/badge.svg)](https://github.com/nathanzk/simple-mq/actions)
 [![Known Vulnerabilities](https://snyk.io/test/github/nathanzk/simple-mq/badge.svg)](https://snyk.io/test/github/nathanzk/simple-mq)
 
 A production-grade message queue service inspired by Amazon SQS. The application is intentionally simple — the focus is infrastructure, operations, and architecture decisions made explicitly.
