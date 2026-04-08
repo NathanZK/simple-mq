@@ -57,6 +57,12 @@ resource "google_compute_instance" "simple_mq_vm" {
     scopes = ["cloud-platform"]
   }
 
+  shielded_instance_config {
+    enable_secure_boot          = true
+    enable_vtpm                 = true
+    enable_integrity_monitoring = true
+  }
+
   tags = ["simple-mq", "http-server", "ssh"]
 
   depends_on = [
