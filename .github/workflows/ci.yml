@@ -21,7 +21,7 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
       - run: ./gradlew ktlintCheck
-      - run: ./gradlew test
+      - run: ./gradlew test jacocoTestReport
       - name: SonarCloud Scan
         if: ${{ !github.event.pull_request.head.repo.fork && env.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarqube-scan-action@299e4b793aaa83bf2aba7c9c14bedbb485688ec4 # v7.1.0
