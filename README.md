@@ -1,7 +1,10 @@
 # simple-mq
-[![CI](https://github.com/nathanzk/simple-mq/actions/workflows/ci.yml/badge.svg)](https://github.com/nathanzk/simple-mq/actions)
 [![CD](https://github.com/nathanzk/simple-mq/actions/workflows/cd.yml/badge.svg)](https://github.com/nathanzk/simple-mq/actions)
 [![Known Vulnerabilities](https://snyk.io/test/github/nathanzk/simple-mq/badge.svg)](https://snyk.io/test/github/nathanzk/simple-mq)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=NathanZK_simple-mq&metric=alert_status)](https://sonarcloud.io/project/overview?id=NathanZK_simple-mq)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=NathanZK_simple-mq&metric=coverage)](https://sonarcloud.io/summary/new_code?id=NathanZK_simple-mq)
+[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=NathanZK_simple-mq&metric=bugs)](https://sonarcloud.io/project/overview?id=NathanZK_simple-mq)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=NathanZK_simple-mq&metric=security_rating)](https://sonarcloud.io/project/overview?id=NathanZK_simple-mq)
 
 A production-grade message queue service inspired by Amazon SQS. The application is intentionally simple — the focus is infrastructure, operations, and architecture decisions made explicitly.
 
