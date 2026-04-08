@@ -74,11 +74,18 @@ jobs:
 
       - name: Deploy to VM
         run: |
+          cat > /tmp/simple-mq.env <<'EOF'
+          OTLP_ENDPOINT=${{ secrets.OTLP_ENDPOINT }}
+          OTLP_AUTH=${{ secrets.OTLP_AUTH }}
+          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          EOF
+          gcloud compute scp /tmp/simple-mq.env appuser@simple-mq-vm:/opt/simple-mq/.env --zone=${{ vars.GCP_ZONE }}
+          rm /tmp/simple-mq.env
           gcloud compute ssh appuser@simple-mq-vm --zone=${{ vars.GCP_ZONE }} --command="
             cd /opt/simple-mq &&
             git pull &&
-            echo 'OTLP_ENDPOINT=${{ secrets.OTLP_ENDPOINT }}' > .env &&
-            echo 'OTLP_AUTH=${{ secrets.OTLP_AUTH }}' >> .env &&
+            chmod 600 .env &&
             docker pull nathanzk/simple-mq:latest &&
             docker-compose up -d
           "
