@@ -18,6 +18,13 @@ provider "google" {
   credentials = var.gcp_credentials_path != "" ? file(var.gcp_credentials_path) : null
 }
 
+# Service account for VM - no roles attached, VM has no GCP API dependencies at runtime
+resource "google_service_account" "vm_sa" {
+  account_id   = "simple-mq-vm"
+  display_name = "simple-mq VM Service Account"
+  description  = "Minimal SA for simple-mq VM. No roles attached - VM has no GCP API dependencies at runtime."
+}
+
 # Compute instance
 resource "google_compute_instance" "simple_mq_vm" {
   name         = "simple-mq-vm"
@@ -44,9 +51,15 @@ resource "google_compute_instance" "simple_mq_vm" {
     startup-script = file("${path.module}/startup.sh")
   }
 
+  service_account {
+    email  = google_service_account.vm_sa.email
+    scopes = ["cloud-platform"]
+  }
+
   tags = ["simple-mq", "http-server", "ssh"]
 
   depends_on = [
+    google_service_account.vm_sa,
     google_compute_firewall.allow_ssh,
     google_compute_firewall.allow_http
   ]
@@ -62,7 +75,7 @@ resource "google_compute_firewall" "allow_ssh" {
     ports    = ["22"]
   }
 
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = ["35.235.240.0/20"]
   target_tags   = ["ssh"]
 }
 
