@@ -16,7 +16,7 @@ COPY src src
 RUN ./gradlew build -x test --no-daemon
 
 # Runtime stage
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25.0.2_10-jre
 WORKDIR /app
 COPY --from=builder /app/build/libs/*.jar app.jar
 ENTRYPOINT ["java", "-jar", "app.jar"]
