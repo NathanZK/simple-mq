@@ -29,6 +29,11 @@ class MetricsRegistrar(
     fun registerGaugesForQueue(queueId: UUID) {
         val gauges = mutableListOf<Gauge>()
 
+        val maxDeliveries: Int =
+            queueRepository.findById(queueId)
+                .map { it.maxDeliveries }
+                .orElse(1)
+
         val queueDepthGauge =
             Gauge
                 .builder("simplemq.queue.depth", { 0.0 }) { _ ->
@@ -54,12 +59,7 @@ class MetricsRegistrar(
         val oldestWaitingMessageAgeGauge =
             Gauge
                 .builder("simplemq.queue.oldest_waiting_message_age_seconds", { 0.0 }) { _ ->
-                    val queue = queueRepository.findById(queueId).orElse(null)
-                    if (queue != null) {
-                        messageRepository.findOldestWaitingMessageAge(queueId, LocalDateTime.now(), queue.maxDeliveries)
-                    } else {
-                        0.0
-                    }
+                    messageRepository.findOldestWaitingMessageAge(queueId, LocalDateTime.now(), maxDeliveries)
                 }
                 .description("Age of the oldest waiting message in seconds")
                 .tag("queue_id", queueId.toString())
