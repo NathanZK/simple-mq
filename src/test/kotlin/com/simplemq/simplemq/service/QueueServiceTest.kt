@@ -93,8 +93,8 @@ class QueueServiceTest {
         assertNull(savedQueueArgument.dlqId)
         assertNotNull(savedQueueArgument.queueId)
 
-        assertEquals(savedQueue.queueId, response.queue_id)
-        assertNotNull(response.queue_id)
+        assertEquals(savedQueue.queueId, response.queueId)
+        assertNotNull(response.queueId)
     }
 
     @Test
@@ -118,7 +118,7 @@ class QueueServiceTest {
 
         // Then
         verify(queueRepository, times(2)).save(any<Queue>())
-        assertNotEquals(response1.queue_id, response2.queue_id)
+        assertNotEquals(response1.queueId, response2.queueId)
     }
 
     @Test
@@ -143,13 +143,13 @@ class QueueServiceTest {
 
         // Then
         verify(queueRepository, times(1)).findById(queueId)
-        assertEquals(queueId, response.queue_id)
-        assertEquals("orders-queue", response.queue_name)
-        assertEquals(5000, response.queue_size)
-        assertEquals(30, response.visibility_timeout)
-        assertEquals(5, response.max_deliveries)
-        assertEquals(42, response.current_message_count)
-        assertNull(response.dlq_id)
+        assertEquals(queueId, response.queueId)
+        assertEquals("orders-queue", response.queueName)
+        assertEquals(5000, response.queueSize)
+        assertEquals(30, response.visibilityTimeout)
+        assertEquals(5, response.maxDeliveries)
+        assertEquals(42, response.currentMessageCount)
+        assertNull(response.dlqId)
     }
 
     @Test
@@ -175,7 +175,7 @@ class QueueServiceTest {
 
         // Then
         verify(queueRepository, times(1)).findById(queueId)
-        assertEquals(dlqId, response.dlq_id)
+        assertEquals(dlqId, response.dlqId)
     }
 
     @Test
@@ -235,7 +235,7 @@ class QueueServiceTest {
         // Then
         verify(queueRepository, times(1)).findById(queueId)
         verify(messageRepository, times(1)).save(any<Message>())
-        assertNotNull(response.message_id)
+        assertNotNull(response.messageId)
     }
 
     @Test
@@ -321,11 +321,11 @@ class QueueServiceTest {
 
         // Then - verify the response is correct first
         assertNotNull(response.message)
-        assertEquals(messageId, response.message!!.message_id)
+        assertEquals(messageId, response.message!!.messageId)
         assertEquals("test message", response.message!!.data)
         // Check that invisible_until is in the future (within reasonable range)
         val expectedVisibleTime = LocalDateTime.now().plusSeconds(30)
-        val actualVisibleTime = response.message!!.invisible_until
+        val actualVisibleTime = response.message!!.invisibleUntil
         assertTrue(
             actualVisibleTime.isAfter(expectedVisibleTime.minusSeconds(5)) &&
                 actualVisibleTime.isBefore(expectedVisibleTime.plusSeconds(5)),
@@ -720,10 +720,10 @@ class QueueServiceTest {
         )
 
         assertNotNull(response.message)
-        assertEquals(messageId, response.message!!.message_id)
+        assertEquals(messageId, response.message!!.messageId)
         // Check that invisible_until is in the future (within reasonable range)
         val expectedVisibleTime = LocalDateTime.now().plusSeconds(45)
-        val actualVisibleTime = response.message!!.invisible_until
+        val actualVisibleTime = response.message!!.invisibleUntil
         assertTrue(
             actualVisibleTime.isAfter(expectedVisibleTime.minusSeconds(5)) &&
                 actualVisibleTime.isBefore(expectedVisibleTime.plusSeconds(5)),
@@ -935,7 +935,7 @@ class QueueServiceTest {
         )
         verify(queueRepository, times(2)).save(any<Queue>())
 
-        assertEquals(messageId, response.message_id)
+        assertEquals(messageId, response.messageId)
     }
 
     @Test
@@ -1191,7 +1191,7 @@ class QueueServiceTest {
         val response = queueService.requeueMessage(messageId.toString(), destinationQueueId.toString())
 
         // Then
-        assertEquals(messageId, response.message_id)
+        assertEquals(messageId, response.messageId)
 
         verify(messageRepository, times(1)).updateMessageQueue(messageId, destinationQueueId)
         verify(messageRepository, times(1)).updateMessageDelivery(

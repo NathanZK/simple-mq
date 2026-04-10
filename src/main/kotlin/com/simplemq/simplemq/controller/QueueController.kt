@@ -33,52 +33,52 @@ class QueueController(
 
     @GetMapping("/{queue_id}")
     fun getQueueMetadata(
-        @PathVariable queue_id: String,
+        @PathVariable("queue_id") queueId: String,
     ): ResponseEntity<GetQueueMetadataResponse> {
-        val response = queueService.getQueueMetadata(queue_id)
+        val response = queueService.getQueueMetadata(queueId)
         return ResponseEntity.ok(response)
     }
 
     @PostMapping("/{queue_id}/messages")
     fun enqueueMessage(
-        @PathVariable queue_id: String,
+        @PathVariable("queue_id") queueId: String,
         @Valid @RequestBody request: EnqueueMessageRequest,
     ): ResponseEntity<EnqueueMessageResponse> {
-        val response = queueService.enqueueMessage(queue_id, request)
+        val response = queueService.enqueueMessage(queueId, request)
         return ResponseEntity.status(HttpStatus.CREATED).body(response)
     }
 
     @GetMapping("/{queue_id}/messages")
     fun dequeueMessage(
-        @PathVariable queue_id: String,
+        @PathVariable("queue_id") queueId: String,
     ): ResponseEntity<DequeueMessageResponse> {
-        val response = queueService.dequeueMessage(queue_id)
+        val response = queueService.dequeueMessage(queueId)
         return ResponseEntity.ok(response)
     }
 
     @DeleteMapping("/{queue_id}/messages/{message_id}")
     fun deleteMessage(
-        @PathVariable queue_id: String,
-        @PathVariable message_id: String,
+        @PathVariable("queue_id") queueId: String,
+        @PathVariable("message_id") messageId: String,
     ): ResponseEntity<Unit> {
-        queueService.deleteMessage(queue_id, message_id)
+        queueService.deleteMessage(queueId, messageId)
         return ResponseEntity.ok().build()
     }
 
     @PostMapping("/{queue_id}/messages/{message_id}/requeue")
     fun requeueMessage(
-        @PathVariable queue_id: String,
-        @PathVariable message_id: String,
+        @PathVariable("queue_id") queueId: String,
+        @PathVariable("message_id") messageId: String,
     ): ResponseEntity<EnqueueMessageResponse> {
-        val response = queueService.requeueMessage(message_id, queue_id)
+        val response = queueService.requeueMessage(messageId, queueId)
         return ResponseEntity.ok(response)
     }
 
     @DeleteMapping("/{queue_id}")
     fun deleteQueue(
-        @PathVariable queue_id: String,
+        @PathVariable("queue_id") queueId: String,
     ): ResponseEntity<Unit> {
-        queueService.deleteQueue(queue_id)
+        queueService.deleteQueue(queueId)
         return ResponseEntity.ok().build()
     }
 }
