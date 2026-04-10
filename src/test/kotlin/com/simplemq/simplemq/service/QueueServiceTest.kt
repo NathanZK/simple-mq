@@ -878,7 +878,7 @@ class QueueServiceTest {
                 queueService.deleteMessage(queueId.toString(), messageId.toString())
             }
 
-        assertEquals("Message not found", exception.message)
+        assertEquals("Queue not found with ID: $queueId", exception.message)
         verify(messageRepository, never()).findByMessageIdAndQueueId(any(), any())
         verify(messageRepository, never()).deleteById(any())
     }
