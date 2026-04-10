@@ -60,7 +60,7 @@ class QueueController(
     fun deleteMessage(
         @PathVariable queue_id: String,
         @PathVariable message_id: String,
-    ): ResponseEntity<Void> {
+    ): ResponseEntity<Unit> {
         queueService.deleteMessage(queue_id, message_id)
         return ResponseEntity.ok().build()
     }
@@ -77,7 +77,7 @@ class QueueController(
     @DeleteMapping("/{queue_id}")
     fun deleteQueue(
         @PathVariable queue_id: String,
-    ): ResponseEntity<Void> {
+    ): ResponseEntity<Unit> {
         queueService.deleteQueue(queue_id)
         return ResponseEntity.ok().build()
     }
