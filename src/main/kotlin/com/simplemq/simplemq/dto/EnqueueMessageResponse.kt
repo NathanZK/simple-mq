@@ -1,7 +1,9 @@
 package com.simplemq.simplemq.dto
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.util.UUID
 
 data class EnqueueMessageResponse(
-    val message_id: UUID,
+    @JsonProperty("message_id")
+    val messageId: UUID,
 )

@@ -156,13 +156,13 @@ class QueueControllerTest {
         val queueId = UUID.randomUUID()
         val expectedResponse =
             GetQueueMetadataResponse(
-                queue_id = queueId,
-                queue_name = "orders-queue",
-                queue_size = 5000,
-                visibility_timeout = 30,
-                max_deliveries = 5,
-                current_message_count = 42,
-                dlq_id = null,
+                queueId = queueId,
+                queueName = "orders-queue",
+                queueSize = 5000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 42,
+                dlqId = null,
             )
 
         whenever(queueService.getQueueMetadata(queueId.toString())).thenReturn(expectedResponse)
@@ -192,13 +192,13 @@ class QueueControllerTest {
         val dlqId = UUID.randomUUID()
         val expectedResponse =
             GetQueueMetadataResponse(
-                queue_id = queueId,
-                queue_name = "orders-queue",
-                queue_size = 5000,
-                visibility_timeout = 30,
-                max_deliveries = 5,
-                current_message_count = 42,
-                dlq_id = dlqId,
+                queueId = queueId,
+                queueName = "orders-queue",
+                queueSize = 5000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 42,
+                dlqId = dlqId,
             )
 
         whenever(queueService.getQueueMetadata(queueId.toString())).thenReturn(expectedResponse)
@@ -339,9 +339,9 @@ class QueueControllerTest {
             DequeueMessageResponse(
                 message =
                     DequeuedMessage(
-                        message_id = messageId,
+                        messageId = messageId,
                         data = "test message data",
-                        invisible_until = invisibleUntil,
+                        invisibleUntil = invisibleUntil,
                     ),
             )
 
@@ -425,9 +425,9 @@ class QueueControllerTest {
             DequeueMessageResponse(
                 message =
                     DequeuedMessage(
-                        message_id = messageId,
+                        messageId = messageId,
                         data = "important order data",
-                        invisible_until = invisibleUntil,
+                        invisibleUntil = invisibleUntil,
                     ),
             )
 
@@ -488,9 +488,9 @@ class QueueControllerTest {
             DequeueMessageResponse(
                 message =
                     DequeuedMessage(
-                        message_id = messageId,
+                        messageId = messageId,
                         data = messageData,
-                        invisible_until = invisibleUntil,
+                        invisibleUntil = invisibleUntil,
                     ),
             )
 
@@ -608,7 +608,7 @@ class QueueControllerTest {
         val messageId = UUID.randomUUID()
         val expectedResponse =
             EnqueueMessageResponse(
-                message_id = messageId,
+                messageId = messageId,
             )
 
         whenever(queueService.requeueMessage(messageId.toString(), queueId.toString())).thenReturn(expectedResponse)
@@ -727,7 +727,7 @@ class QueueControllerTest {
         val messageId = UUID.randomUUID()
         val expectedResponse =
             EnqueueMessageResponse(
-                message_id = messageId,
+                messageId = messageId,
             )
 
         whenever(queueService.requeueMessage(messageId.toString(), queueId.toString())).thenReturn(expectedResponse)
@@ -759,7 +759,7 @@ class QueueControllerTest {
         val messageId = UUID.randomUUID()
         val expectedResponse =
             EnqueueMessageResponse(
-                message_id = messageId,
+                messageId = messageId,
             )
 
         whenever(queueService.requeueMessage(messageId.toString(), originalQueueId.toString())).thenReturn(expectedResponse)
@@ -782,7 +782,7 @@ class QueueControllerTest {
         val messageId = UUID.randomUUID()
         val expectedResponse =
             EnqueueMessageResponse(
-                message_id = messageId,
+                messageId = messageId,
             )
 
         whenever(queueService.requeueMessage(messageId.toString(), destinationQueueId.toString())).thenReturn(expectedResponse)

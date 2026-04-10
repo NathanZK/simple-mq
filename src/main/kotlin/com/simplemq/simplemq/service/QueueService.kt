@@ -80,13 +80,13 @@ class QueueService(
                 }
 
         return GetQueueMetadataResponse(
-            queue_id = queue.queueId,
-            queue_name = queue.queueName,
-            queue_size = queue.queueSize,
-            visibility_timeout = queue.visibilityTimeout,
-            max_deliveries = queue.maxDeliveries,
-            current_message_count = queue.currentMessageCount,
-            dlq_id = queue.dlqId,
+            queueId = queue.queueId,
+            queueName = queue.queueName,
+            queueSize = queue.queueSize,
+            visibilityTimeout = queue.visibilityTimeout,
+            maxDeliveries = queue.maxDeliveries,
+            currentMessageCount = queue.currentMessageCount,
+            dlqId = queue.dlqId,
         )
     }
 
@@ -242,9 +242,9 @@ class QueueService(
             DequeueMessageResponse(
                 message =
                     DequeuedMessage(
-                        message_id = message.messageId,
+                        messageId = message.messageId,
                         data = message.data,
-                        invisible_until = newVisibleAt,
+                        invisibleUntil = newVisibleAt,
                     ),
             )
         } else {
@@ -340,7 +340,7 @@ class QueueService(
         incrementCounter(REQUEUE_TOTAL_METRIC, queueId, "success")
 
         return EnqueueMessageResponse(
-            message_id = messageIdAsUUID,
+            messageId = messageIdAsUUID,
         )
     }
 
