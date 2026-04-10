@@ -510,19 +510,29 @@ A k6 load test was run against the production VM via Grafana Cloud k6 — 10 VUs
 
 | Metric | Value |
 |---|---|
-| Total requests | 8,532 |
+| Total requests | 16,749 |
 | HTTP failures | 0 |
-| Peak RPS | 190 |
-| Sustained RPS | ~30 |
-| P99 latency | 1,015ms (enqueue) |
+| Peak RPS | 353 |
+| Sustained RPS | ~88 |
+| P95 latency | 255ms |
+
+![K6 Load Testing](assets/k6-load-testing.png)
+
+### Dashboard
+
+![Grafana Dashboard 1](assets/grafana-dashboard-1.png)
+![Grafana Dashboard 2](assets/grafana-dashboard-2.png)
 
 ### Findings
 
-The service handled all requests without errors. Effective throughput was limited by JVM GC pressure on a heap-constrained VM.
+The service handled all requests without errors. Throughput nearly doubled compared to the initial run (190 → 353 peak RPS, P95 510ms → 255ms) following targeted optimizations:
 
-**Primary bottleneck: GC stop-the-world pauses.** Eden space filled to 96MB under sustained load from request/response object allocation. A 486ms stop-the-world pause froze all request handlers simultaneously, causing latency to spike across every endpoint. Coinciding with the pause, GCP CPU utilization spiked above 400% of the VM's 0.25 vCPU allocation as the VM burst to complete GC while serving requests. Effective concurrency collapsed from 10 VUs to ~2 during this period.
+- **Reduced allocation pressure** by caching Counter instances instead of creating new objects on every operation, and by raising log levels from DEBUG to INFO/WARN across application, Spring Web, and Hibernate SQL loggers — eliminating per-request string construction for every SQL statement and HTTP interaction under load
+- **Fixed memory leaks in the metrics system** — deleted queues were leaving phantom gauges that continued issuing DB queries indefinitely, and the registeredGauges map grew unbounded. Added deregisterGaugesForQueue and wired it into deleteQueue for both queue and DLQ cleanup
 
-**Recovery was clean.** Latency returned to baseline immediately after the load test ended — no OOM, no connection pool exhaustion, no runaway state.
+**Bottleneck: GC stop-the-world pauses.** Eden space fills under sustained load from request/response object allocation, triggering stop-the-world pauses — 486ms in the initial run, 348ms in the latest. During these pauses, all request handlers freeze simultaneously, causing latency spikes across every endpoint. Effective concurrency collapses from 10 VUs to ~2 during this period.
+
+**Recovery was clean.** Latency returned to baseline immediately after load tests ended — no OOM, no connection pool exhaustion, no runaway state.
 
 **GC algorithm comparison.** Serial GC was evaluated as an alternative. It performed worse — P99 increased and peak RPS dropped from 190 to 173. Serial GC is designed for single-threaded batch workloads; under concurrent load the single-threaded collector takes longer to clear Eden than the default Parallel GC. Reverted.
 
@@ -538,7 +548,6 @@ The `-Xmx384m` heap ceiling was set deliberately to prevent OOM on a 1GB VM shar
 
 - **Single VM, no load balancer:** The service runs as a single instance with no horizontal scaling. Adding instances requires a load balancer and a shared PostgreSQL instance.
 
-- **Throughput ceiling on e2-micro:** Sustained load triggers GC pressure due to the 384MB heap ceiling. Sustained throughput under 10 concurrent users is approximately 30 req/sec. This is a hardware constraint, not an application design constraint.
 
 - **No DLQ polling:** There is currently no way to poll messages directly from a DLQ. Messages can be requeued to the parent queue via the requeue endpoint, but direct DLQ consumption is not supported.
 
