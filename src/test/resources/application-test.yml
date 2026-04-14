@@ -1,0 +1,9 @@
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+spring:
+  datasource:
+    username: test
+    password: test
