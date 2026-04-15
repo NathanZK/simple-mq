@@ -3,6 +3,11 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/simplemq}
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
+    hikari:
+      maximum-pool-size: 8
+      minimum-idle: 8
+      max-lifetime: 3600000
+      connection-timeout: 2000
   
   jpa:
     hibernate:
