@@ -6,8 +6,10 @@ import com.simplemq.simplemq.dto.DequeueMessageResponse
 import com.simplemq.simplemq.dto.EnqueueMessageRequest
 import com.simplemq.simplemq.dto.EnqueueMessageResponse
 import com.simplemq.simplemq.dto.GetQueueMetadataResponse
+import com.simplemq.simplemq.dto.MessagePageResponse
 import com.simplemq.simplemq.service.QueueService
 import jakarta.validation.Valid
+import jakarta.validation.constraints.Max
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -16,7 +18,10 @@ import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import java.time.LocalDateTime
+import java.util.UUID
 
 @RestController
 @RequestMapping("/api/queues")
@@ -53,6 +58,17 @@ class QueueController(
         @PathVariable("queue_id") queueId: String,
     ): ResponseEntity<DequeueMessageResponse> {
         val response = queueService.dequeueMessage(queueId)
+        return ResponseEntity.ok(response)
+    }
+
+    @GetMapping("/{queue_id}/messages/peek")
+    fun peekMessages(
+        @PathVariable("queue_id") queueId: String,
+        @RequestParam("limit") @Max(100) limit: Int,
+        @RequestParam("cursorCreatedAt", required = false) cursorCreatedAt: LocalDateTime?,
+        @RequestParam("cursorMessageId", required = false) cursorMessageId: UUID?,
+    ): ResponseEntity<MessagePageResponse> {
+        val response = queueService.peekMessages(queueId, limit, cursorCreatedAt, cursorMessageId)
         return ResponseEntity.ok(response)
     }
 

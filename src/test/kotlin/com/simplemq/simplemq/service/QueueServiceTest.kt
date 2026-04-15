@@ -24,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoSettings
 import org.mockito.kotlin.any
 import org.mockito.kotlin.capture
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.isNull
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
@@ -1256,5 +1257,283 @@ class QueueServiceTest {
         assertTrue(exception.message!!.contains("Invalid UUID string"))
         verify(messageRepository, never()).deleteAllByQueueId(any())
         verify(queueRepository, never()).deleteById(any())
+    }
+
+    @Test
+    fun `peekMessages should return paginated messages with nextCursor when more messages exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val limit = 2
+        val now = LocalDateTime.now()
+        val queue =
+            Queue(
+                queueId = queueId,
+                queueName = "test-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 5,
+            )
+        val messages =
+            listOf(
+                Message(
+                    messageId = UUID.randomUUID(),
+                    queueId = queueId,
+                    data = "message 1",
+                    deliveryCount = 0,
+                    visibleAt = now,
+                    createdAt = now.minusMinutes(3),
+                ),
+                Message(
+                    messageId = UUID.randomUUID(),
+                    queueId = queueId,
+                    data = "message 2",
+                    deliveryCount = 1,
+                    visibleAt = now,
+                    createdAt = now.minusMinutes(2),
+                ),
+                Message(
+                    messageId = UUID.randomUUID(),
+                    queueId = queueId,
+                    data = "message 3",
+                    deliveryCount = 0,
+                    visibleAt = now,
+                    createdAt = now.minusMinutes(1),
+                ),
+            )
+
+        // When
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+        whenever(messageRepository.peekMessages(eq(queueId), isNull(), isNull(), eq(limit + 1))).thenReturn(messages)
+
+        val response = queueService.peekMessages(queueId.toString(), limit, null, null)
+
+        // Then
+        assertEquals(limit, response.messages.size)
+        assertEquals("message 1", response.messages[0].data)
+        assertEquals("message 2", response.messages[1].data)
+        assertEquals(messages[1].createdAt, response.nextCursorCreatedAt)
+        assertEquals(messages[1].messageId, response.nextCursorMessageId)
+
+        verify(queueRepository, times(1)).findById(queueId)
+        verify(messageRepository, times(1)).peekMessages(eq(queueId), isNull(), isNull(), eq(limit + 1))
+    }
+
+    @Test
+    fun `peekMessages should return messages with null nextCursor when reaching EOF`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val limit = 5
+        val now = LocalDateTime.now()
+        val queue =
+            Queue(
+                queueId = queueId,
+                queueName = "test-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 2,
+            )
+        val messages =
+            listOf(
+                Message(
+                    messageId = UUID.randomUUID(),
+                    queueId = queueId,
+                    data = "message 1",
+                    deliveryCount = 0,
+                    visibleAt = now,
+                    createdAt = now.minusMinutes(2),
+                ),
+                Message(
+                    messageId = UUID.randomUUID(),
+                    queueId = queueId,
+                    data = "message 2",
+                    deliveryCount = 1,
+                    visibleAt = now,
+                    createdAt = now.minusMinutes(1),
+                ),
+            )
+
+        // When
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+        whenever(messageRepository.peekMessages(eq(queueId), isNull(), isNull(), eq(limit + 1))).thenReturn(messages)
+
+        val response = queueService.peekMessages(queueId.toString(), limit, null, null)
+
+        // Then
+        assertEquals(2, response.messages.size)
+        assertEquals("message 1", response.messages[0].data)
+        assertEquals("message 2", response.messages[1].data)
+        assertNull(response.nextCursorCreatedAt)
+        assertNull(response.nextCursorMessageId)
+
+        verify(queueRepository, times(1)).findById(queueId)
+        verify(messageRepository, times(1)).peekMessages(eq(queueId), isNull(), isNull(), eq(limit + 1))
+    }
+
+    @Test
+    fun `peekMessages should work with cursor for pagination`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val limit = 2
+        val afterCreatedAt = LocalDateTime.now().minusMinutes(2)
+        val afterMessageId = UUID.randomUUID()
+        val expectedNextCursorCreatedAt = LocalDateTime.now()
+        val expectedNextCursorMessageId = UUID.randomUUID()
+        val now = LocalDateTime.now()
+        val queue =
+            Queue(
+                queueId = queueId,
+                queueName = "test-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 3,
+            )
+        val mockedPageResults =
+            listOf(
+                Message(
+                    messageId = UUID.randomUUID(),
+                    queueId = queueId,
+                    data = "message 1",
+                    deliveryCount = 0,
+                    visibleAt = now,
+                    createdAt = now.minusMinutes(1),
+                ),
+                Message(
+                    messageId = expectedNextCursorMessageId,
+                    queueId = queueId,
+                    data = "message 2",
+                    deliveryCount = 1,
+                    visibleAt = now,
+                    createdAt = expectedNextCursorCreatedAt,
+                ),
+                Message(
+                    messageId = UUID.randomUUID(),
+                    queueId = queueId,
+                    data = "message 3",
+                    deliveryCount = 0,
+                    visibleAt = now,
+                    createdAt = now.plusMinutes(1),
+                ),
+            )
+
+        // When
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+        whenever(
+            messageRepository.peekMessages(
+                eq(queueId),
+                eq(afterCreatedAt),
+                eq(afterMessageId),
+                eq(limit + 1),
+            ),
+        ).thenReturn(mockedPageResults)
+
+        val response = queueService.peekMessages(queueId.toString(), limit, afterCreatedAt, afterMessageId)
+
+        // Then
+        assertEquals(limit, response.messages.size)
+        assertEquals("message 1", response.messages[0].data)
+        assertEquals("message 2", response.messages[1].data)
+        assertEquals(response.nextCursorCreatedAt, expectedNextCursorCreatedAt)
+        assertEquals(response.nextCursorMessageId, expectedNextCursorMessageId)
+
+        verify(queueRepository, times(1)).findById(queueId)
+        verify(messageRepository, times(1)).peekMessages(eq(queueId), eq(afterCreatedAt), eq(afterMessageId), eq(limit + 1))
+    }
+
+    @Test
+    fun `peekMessages should return empty list when queue has no messages`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val limit = 5
+        val queue =
+            Queue(
+                queueId = queueId,
+                queueName = "test-queue",
+                queueSize = 1000,
+                visibilityTimeout = 30,
+                maxDeliveries = 5,
+                currentMessageCount = 0,
+            )
+
+        // When
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+        whenever(messageRepository.peekMessages(eq(queueId), isNull(), isNull(), eq(limit + 1))).thenReturn(emptyList())
+
+        val response = queueService.peekMessages(queueId.toString(), limit, null, null)
+
+        // Then
+        assertEquals(0, response.messages.size)
+        assertNull(response.nextCursorCreatedAt)
+        assertNull(response.nextCursorMessageId)
+
+        verify(queueRepository, times(1)).findById(queueId)
+        verify(messageRepository, times(1)).peekMessages(eq(queueId), isNull(), isNull(), eq(limit + 1))
+    }
+
+    @Test
+    fun `peekMessages should throw IllegalArgumentException when queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val limit = 5
+
+        // When
+        whenever(queueRepository.findById(queueId)).thenReturn(Optional.empty())
+
+        // Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.peekMessages(queueId.toString(), limit, null, null)
+            }
+
+        assertEquals("Queue not found with ID: $queueId", exception.message)
+        verify(queueRepository, times(1)).findById(queueId)
+        verify(messageRepository, never()).peekMessages(any(), any(), any(), any())
+    }
+
+    @Test
+    fun `peekMessages should throw IllegalArgumentException for invalid UUID format`() {
+        // Given
+        val invalidQueueId = "invalid-uuid-format"
+        val limit = 5
+
+        // When & Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.peekMessages(invalidQueueId, limit, null, null)
+            }
+
+        assertTrue(exception.message!!.contains("Invalid UUID string"))
+        verify(queueRepository, never()).findById(any())
+        verify(messageRepository, never()).peekMessages(any(), any(), any(), any())
+    }
+
+    @Test
+    fun `peekMessages should throw IllegalArgumentException for invalid limit`() {
+        // Given
+        val queueId = UUID.randomUUID()
+
+        // When & Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.peekMessages(queueId.toString(), 0, null, null)
+            }
+
+        assertEquals("Limit must be greater than 0", exception.message)
+    }
+
+    @Test
+    fun `peekMessages should throw IllegalArgumentException for invalid limit (exceeds max)`() {
+        // Given
+        val queueId = UUID.randomUUID()
+
+        // When & Then
+        val exception =
+            assertThrows(IllegalArgumentException::class.java) {
+                queueService.peekMessages(queueId.toString(), 101, null, null)
+            }
+
+        assertEquals("Limit must not exceed 100", exception.message)
     }
 }

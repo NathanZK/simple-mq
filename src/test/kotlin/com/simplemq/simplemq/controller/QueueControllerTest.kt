@@ -4,15 +4,18 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.simplemq.simplemq.dto.CreateQueueRequest
 import com.simplemq.simplemq.dto.CreateQueueResponse
 import com.simplemq.simplemq.dto.DequeueMessageResponse
-import com.simplemq.simplemq.dto.DequeuedMessage
 import com.simplemq.simplemq.dto.EnqueueMessageRequest
 import com.simplemq.simplemq.dto.EnqueueMessageResponse
 import com.simplemq.simplemq.dto.GetQueueMetadataResponse
+import com.simplemq.simplemq.dto.MessagePageResponse
+import com.simplemq.simplemq.dto.MessageResponse
 import com.simplemq.simplemq.service.QueueService
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
+import org.mockito.kotlin.isNull
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
@@ -338,10 +341,12 @@ class QueueControllerTest {
         val expectedResponse =
             DequeueMessageResponse(
                 message =
-                    DequeuedMessage(
+                    MessageResponse(
                         messageId = messageId,
                         data = "test message data",
+                        deliveryCount = 1,
                         invisibleUntil = invisibleUntil,
+                        createdAt = LocalDateTime.now(),
                     ),
             )
 
@@ -424,10 +429,12 @@ class QueueControllerTest {
         val expectedResponse =
             DequeueMessageResponse(
                 message =
-                    DequeuedMessage(
+                    MessageResponse(
                         messageId = messageId,
                         data = "important order data",
+                        deliveryCount = 1,
                         invisibleUntil = invisibleUntil,
+                        createdAt = LocalDateTime.now(),
                     ),
             )
 
@@ -487,10 +494,12 @@ class QueueControllerTest {
         val expectedResponse =
             DequeueMessageResponse(
                 message =
-                    DequeuedMessage(
+                    MessageResponse(
                         messageId = messageId,
                         data = messageData,
+                        deliveryCount = 1,
                         invisibleUntil = invisibleUntil,
+                        createdAt = LocalDateTime.now(),
                     ),
             )
 
@@ -843,5 +852,247 @@ class QueueControllerTest {
             .andExpect(status().isBadRequest())
 
         verify(queueService, times(1)).deleteQueue(invalidQueueId)
+    }
+
+    @Test
+    fun `peekMessages should return 200 OK with paginated messages and nextCursor`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val limit = 2
+        val now = LocalDateTime.now()
+        val messageId = UUID.randomUUID()
+        val expectedResponse =
+            MessagePageResponse(
+                messages =
+                    listOf(
+                        MessageResponse(
+                            messageId = UUID.randomUUID(),
+                            data = "message 1",
+                            deliveryCount = 0,
+                            invisibleUntil = now,
+                            createdAt = now.minusMinutes(2),
+                        ),
+                        MessageResponse(
+                            messageId = messageId,
+                            data = "message 2",
+                            deliveryCount = 1,
+                            invisibleUntil = now,
+                            createdAt = now.minusMinutes(1),
+                        ),
+                    ),
+                nextCursorCreatedAt = now.minusMinutes(1),
+                nextCursorMessageId = messageId,
+            )
+
+        whenever(queueService.peekMessages(eq(queueId.toString()), eq(limit), isNull(), isNull())).thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages/peek", queueId.toString())
+                .param("limit", limit.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.messages").isArray())
+            .andExpect(jsonPath("$.messages.length()").value(2))
+            .andExpect(jsonPath("$.messages[0].data").value("message 1"))
+            .andExpect(jsonPath("$.messages[1].data").value("message 2"))
+            .andExpect(jsonPath("$.next_cursor_created_at").exists())
+            .andExpect(jsonPath("$.next_cursor_message_id").exists())
+
+        verify(queueService, times(1)).peekMessages(eq(queueId.toString()), eq(limit), isNull(), isNull())
+    }
+
+    @Test
+    fun `peekMessages should return 200 OK with null nextCursor when reaching EOF`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val limit = 5
+        val now = LocalDateTime.now()
+        val expectedResponse =
+            MessagePageResponse(
+                messages =
+                    listOf(
+                        MessageResponse(
+                            messageId = UUID.randomUUID(),
+                            data = "only message",
+                            deliveryCount = 0,
+                            invisibleUntil = now,
+                            createdAt = now.minusMinutes(1),
+                        ),
+                    ),
+                nextCursorCreatedAt = null,
+                nextCursorMessageId = null,
+            )
+
+        whenever(queueService.peekMessages(queueId.toString(), limit, null, null)).thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages/peek", queueId.toString())
+                .param("limit", limit.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.messages").isArray())
+            .andExpect(jsonPath("$.messages.length()").value(1))
+            .andExpect(jsonPath("$.messages[0].data").value("only message"))
+            .andExpect(jsonPath("$.next_cursor_created_at").isEmpty())
+            .andExpect(jsonPath("$.next_cursor_message_id").isEmpty())
+
+        verify(queueService, times(1)).peekMessages(eq(queueId.toString()), eq(limit), isNull(), isNull())
+    }
+
+    @Test
+    fun `peekMessages should work with cursor parameter`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val limit = 3
+        val cursorCreatedAt = LocalDateTime.parse("2026-04-01T10:23:45")
+        val cursorMessageId = UUID.randomUUID()
+        val now = LocalDateTime.now()
+        val expectedResponse =
+            MessagePageResponse(
+                messages =
+                    listOf(
+                        MessageResponse(
+                            messageId = UUID.randomUUID(),
+                            data = "message after cursor",
+                            deliveryCount = 0,
+                            invisibleUntil = now,
+                            createdAt = now,
+                        ),
+                    ),
+                nextCursorCreatedAt = null,
+                nextCursorMessageId = null,
+            )
+
+        whenever(queueService.peekMessages(eq(queueId.toString()), eq(limit), eq(cursorCreatedAt), eq(cursorMessageId)))
+            .thenReturn(expectedResponse)
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages/peek", queueId.toString())
+                .param("limit", limit.toString())
+                .param("cursorCreatedAt", cursorCreatedAt.toString())
+                .param("cursorMessageId", cursorMessageId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.messages").isArray())
+            .andExpect(jsonPath("$.messages.length()").value(1))
+            .andExpect(jsonPath("$.messages[0].data").value("message after cursor"))
+            .andExpect(jsonPath("$.next_cursor_created_at").isEmpty())
+            .andExpect(jsonPath("$.next_cursor_message_id").isEmpty())
+
+        verify(queueService, times(1)).peekMessages(queueId.toString(), limit, cursorCreatedAt, cursorMessageId)
+    }
+
+    @Test
+    fun `peekMessages should return 400 Bad Request when limit parameter is missing`() {
+        // Given
+        val queueId = UUID.randomUUID()
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages/peek", queueId.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isBadRequest())
+
+        verify(queueService, never()).peekMessages(any(), any(), any(), any())
+    }
+
+    @Test
+    fun `peekMessages should return 404 Not Found when queue does not exist`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val limit = 5
+
+        whenever(queueService.peekMessages(queueId.toString(), limit, null, null))
+            .thenThrow(IllegalArgumentException("Queue not found with ID: $queueId"))
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages/peek", queueId.toString())
+                .param("limit", limit.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isNotFound())
+
+        verify(queueService, times(1)).peekMessages(eq(queueId.toString()), eq(limit), isNull(), isNull())
+    }
+
+    @Test
+    fun `peekMessages should return 400 Bad Request for invalid queue UUID format`() {
+        // Given
+        val invalidQueueId = "invalid-uuid-format"
+        val limit = 5
+
+        whenever(queueService.peekMessages(eq(invalidQueueId), eq(limit), isNull(), isNull()))
+            .thenThrow(IllegalArgumentException("Invalid UUID string: invalid-uuid-format"))
+
+        // When & Then
+        mockMvc.perform(
+            get("/api/queues/{queue_id}/messages/peek", invalidQueueId)
+                .param("limit", limit.toString())
+                .contentType(MediaType.APPLICATION_JSON),
+        )
+            .andExpect(status().isBadRequest())
+
+        verify(queueService, times(1)).peekMessages(invalidQueueId, limit, null, null)
+    }
+
+    @Test
+    fun `peekMessages should return correct JSON structure`() {
+        // Given
+        val queueId = UUID.randomUUID()
+        val limit = 1
+        val now = LocalDateTime.now()
+        val messageId = UUID.randomUUID()
+        val expectedResponse =
+            MessagePageResponse(
+                messages =
+                    listOf(
+                        MessageResponse(
+                            messageId = messageId,
+                            data = "test message with special chars: \"quotes\", \n newlines, \t tabs, and emojis 🚀",
+                            deliveryCount = 2,
+                            invisibleUntil = now,
+                            createdAt = now.minusMinutes(5),
+                        ),
+                    ),
+                nextCursorCreatedAt = now,
+                nextCursorMessageId = messageId,
+            )
+
+        whenever(queueService.peekMessages(eq(queueId.toString()), eq(limit), isNull(), isNull())).thenReturn(expectedResponse)
+
+        // When & Then
+        val result =
+            mockMvc.perform(
+                get("/api/queues/{queue_id}/messages/peek", queueId.toString())
+                    .param("limit", limit.toString())
+                    .contentType(MediaType.APPLICATION_JSON),
+            )
+                .andExpect(status().isOk())
+                .andReturn().response.contentAsString
+
+        // Verify JSON structure
+        assertTrue(result.contains("\"messages\""))
+        assertTrue(result.contains("\"next_cursor_created_at\""))
+        assertTrue(result.contains("\"next_cursor_message_id\""))
+        assertTrue(result.contains("\"message_id\""))
+        assertTrue(result.contains("\"data\""))
+        assertTrue(result.contains("\"delivery_count\""))
+        assertTrue(result.contains("\"invisible_until\""))
+        assertTrue(result.contains("\"created_at\""))
+        assertTrue(result.contains(messageId.toString()))
+        assertTrue(result.contains("test message with special chars"))
+
+        verify(queueService, times(1)).peekMessages(eq(queueId.toString()), eq(limit), isNull(), isNull())
     }
 }

@@ -245,7 +245,118 @@ curl -X DELETE http://localhost:8080/api/queues/550e8400-e29b-41d4-a716-44665544
 
 ---
 
-### 6. Requeue Message
+### 6. Peek Messages
+
+**GET** `/api/queues/{queue_id}/messages/peek`
+
+Retrieves messages from the queue without dequeuing or locking them, supporting cursor-based pagination for large queues.
+
+#### Path Parameters
+- `queue_id` (string, required): UUID of the queue
+
+#### Query Parameters
+- `limit` (integer, required): Maximum number of messages to return (max: 100)
+- `cursorCreatedAt` (string, optional): ISO 8601 datetime string for pagination - returns messages created after this timestamp
+- `cursorMessageId` (string, optional): UUID of the last message from the previous page - used with cursorCreatedAt for stable pagination
+
+#### Cursor Logic
+- **Neither provided**: Fetch from oldest message
+- **Both provided**: Full composite cursor - returns messages where `(created_at, message_id) > (cursorCreatedAt, cursorMessageId)` (stable pagination)
+- **Only cursorCreatedAt provided**: Returns messages where `created_at > cursorCreatedAt` (slight skip risk at boundary if multiple messages share same timestamp)
+- **Only cursorMessageId provided**: Ignored, treated as no cursor
+
+#### Response
+```json
+{
+  "messages": [
+    {
+      "message_id": "uuid",
+      "data": "string",
+      "delivery_count": "integer",
+      "invisible_until": "datetime",
+      "created_at": "datetime"
+    }
+  ],
+  "nextCursorCreatedAt": "iso8601-instant|null",
+  "nextCursorMessageId": "uuid|null"
+}
+```
+
+#### Example Request (First Page)
+```bash
+curl -X GET "http://localhost:8080/api/queues/550e8400-e29b-41d4-a716-446655440000/messages/peek?limit=10"
+```
+
+#### Example Request (With Cursor - Stable Pagination)
+```bash
+curl -X GET "http://localhost:8080/api/queues/550e8400-e29b-41d4-a716-446655440000/messages/peek?limit=10&cursorCreatedAt=2024-03-28T15:26:00&cursorMessageId=880e8400-e29b-41d4-a716-446655440003"
+```
+
+#### Example Response (Messages Available)
+```json
+{
+  "messages": [
+    {
+      "message_id": "770e8400-e29b-41d4-a716-446655440002",
+      "data": "{\"orderId\": \"12345\", \"amount\": 99.99}",
+      "delivery_count": 2,
+      "invisible_until": "2024-03-28T15:35:00",
+      "created_at": "2024-03-28T15:25:00"
+    },
+    {
+      "message_id": "880e8400-e29b-41d4-a716-446655440003",
+      "data": "{\"orderId\": \"12346\", \"amount\": 149.99}",
+      "delivery_count": 0,
+      "invisible_until": "2024-03-28T15:40:00",
+      "created_at": "2024-03-28T15:26:00"
+    }
+  ],
+  "nextCursorCreatedAt": "2024-03-28T15:26:00Z",
+  "nextCursorMessageId": "880e8400-e29b-41d4-a716-446655440003"
+}
+```
+
+#### Example Response (End of Queue)
+```json
+{
+  "messages": [
+    {
+      "message_id": "990e8400-e29b-41d4-a716-446655440004",
+      "data": "{\"orderId\": \"12347\", \"amount\": 199.99}",
+      "delivery_count": 1,
+      "invisible_until": "2024-03-28T15:45:00",
+      "created_at": "2024-03-28T15:27:00"
+    }
+  ],
+  "nextCursorCreatedAt": null,
+  "nextCursorMessageId": null
+}
+```
+
+#### Example Response (Empty Queue)
+```json
+{
+  "messages": [],
+  "nextCursorCreatedAt": null,
+  "nextCursorMessageId": null
+}
+```
+
+#### HTTP Status Codes
+- `200 OK`: Messages retrieved successfully
+- `404 Not Found`: Queue not found
+- `400 Bad Request`: Invalid cursor format, invalid UUID format, or limit value (must be > 0 and <= 100)
+
+#### Notes
+- Messages are returned in ascending order by creation timestamp, then by message ID
+- For stable pagination, provide both `cursorCreatedAt` and `cursorMessageId` from the last message in the previous page
+- `nextCursorCreatedAt` and `nextCursorMessageId` are both `null` when there are no more messages to retrieve
+- Unlike dequeue, this operation does not lock messages or affect their visibility
+- Useful for message inspection, debugging, and monitoring without affecting message availability
+
+---
+
+### 7. Requeue Message
 
 **POST** `/api/queues/{queue_id}/messages/{message_id}/requeue`
 

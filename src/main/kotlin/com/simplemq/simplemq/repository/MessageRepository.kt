@@ -103,4 +103,31 @@ interface MessageRepository : JpaRepository<Message, UUID> {
     fun deleteAllByQueueId(
         @Param("queueId") queueId: UUID,
     )
+
+    @Query(
+        value = """
+            SELECT * FROM messages 
+            WHERE queue_id = CAST(:queueId AS uuid)
+            AND (
+                CAST(:cursorCreatedAt AS timestamp) IS NULL
+                OR (
+                    CAST(:cursorMessageId AS uuid) IS NOT NULL
+                    AND (created_at, message_id) > (CAST(:cursorCreatedAt AS timestamp), CAST(:cursorMessageId AS uuid))
+                )
+                OR (
+                    CAST(:cursorMessageId AS uuid) IS NULL
+                    AND created_at > CAST(:cursorCreatedAt AS timestamp)
+                )
+            )
+            ORDER BY created_at ASC, message_id ASC 
+            LIMIT :limit
+        """,
+        nativeQuery = true,
+    )
+    fun peekMessages(
+        @Param("queueId") queueId: UUID,
+        @Param("cursorCreatedAt") cursorCreatedAt: LocalDateTime?,
+        @Param("cursorMessageId") cursorMessageId: UUID?,
+        @Param("limit") limit: Int,
+    ): List<Message>
 }
