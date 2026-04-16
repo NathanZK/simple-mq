@@ -3,10 +3,11 @@ package com.simplemq.simplemq.service
 import com.simplemq.simplemq.dto.CreateQueueRequest
 import com.simplemq.simplemq.dto.CreateQueueResponse
 import com.simplemq.simplemq.dto.DequeueMessageResponse
-import com.simplemq.simplemq.dto.DequeuedMessage
 import com.simplemq.simplemq.dto.EnqueueMessageRequest
 import com.simplemq.simplemq.dto.EnqueueMessageResponse
 import com.simplemq.simplemq.dto.GetQueueMetadataResponse
+import com.simplemq.simplemq.dto.MessagePageResponse
+import com.simplemq.simplemq.dto.MessageResponse
 import com.simplemq.simplemq.entity.Message
 import com.simplemq.simplemq.entity.Queue
 import com.simplemq.simplemq.repository.MessageRepository
@@ -241,10 +242,12 @@ class QueueService(
 
             DequeueMessageResponse(
                 message =
-                    DequeuedMessage(
+                    MessageResponse(
                         messageId = message.messageId,
                         data = message.data,
+                        deliveryCount = message.deliveryCount + 1,
                         invisibleUntil = newVisibleAt,
+                        createdAt = message.createdAt,
                     ),
             )
         } else {
@@ -341,6 +344,68 @@ class QueueService(
 
         return EnqueueMessageResponse(
             messageId = messageIdAsUUID,
+        )
+    }
+
+    fun peekMessages(
+        queueId: String,
+        limit: Int,
+        cursorCreatedAt: LocalDateTime?,
+        cursorMessageId: UUID?,
+    ): MessagePageResponse {
+        // Validate limit
+        require(limit > 0) { "Limit must be greater than 0" }
+        require(limit <= 100) { "Limit must not exceed 100" }
+
+        val queueIdAsUUID = UUID.fromString(queueId)
+
+        // Check if queue exists
+        queueRepository.findById(queueIdAsUUID)
+            .orElseThrow {
+                IllegalArgumentException("Queue not found with ID: $queueId")
+            }
+
+        // Simplified cursor logic: if no createdAt, message ID is irrelevant
+        val actualCursorMessageId = if (cursorCreatedAt != null) cursorMessageId else null
+
+        // Fetch messages with pagination (limit + 1 to detect EOF)
+        val messages =
+            messageRepository.peekMessages(
+                queueId = queueIdAsUUID,
+                cursorCreatedAt = cursorCreatedAt,
+                cursorMessageId = actualCursorMessageId,
+                limit = limit + 1,
+            )
+
+        // Determine if there are more messages and get the actual messages to return
+        val hasMore = messages.size > limit
+        val messagesToReturn = if (hasMore) messages.take(limit) else messages
+
+        // Convert to Message DTOs
+        val messageResponses =
+            messagesToReturn.map { message ->
+                MessageResponse(
+                    messageId = message.messageId,
+                    data = message.data,
+                    deliveryCount = message.deliveryCount,
+                    invisibleUntil = message.visibleAt,
+                    createdAt = message.createdAt,
+                )
+            }
+
+        // Determine next cursor - null if no more messages
+        val (nextCursorCreatedAt, nextCursorMessageId) =
+            if (hasMore) {
+                val lastMessage = messagesToReturn.last()
+                lastMessage.createdAt to lastMessage.messageId
+            } else {
+                null to null
+            }
+
+        return MessagePageResponse(
+            messages = messageResponses,
+            nextCursorCreatedAt = nextCursorCreatedAt,
+            nextCursorMessageId = nextCursorMessageId,
         )
     }
 

@@ -4,6 +4,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import java.time.format.DateTimeParseException
 import java.util.Date
 
 @RestControllerAdvice
@@ -35,6 +36,18 @@ class GlobalExceptionHandler {
             .body(
                 mapOf(
                     "error" to (ex.message ?: "Queue error"),
+                    "timestamp" to Date().toString(),
+                ),
+            )
+    }
+
+    @ExceptionHandler(DateTimeParseException::class)
+    fun handleDateTimeParseException(ex: DateTimeParseException): ResponseEntity<Map<String, String>> {
+        return ResponseEntity
+            .status(HttpStatus.BAD_REQUEST)
+            .body(
+                mapOf(
+                    "error" to "Invalid cursor format. Expected ISO timestamp format.",
                     "timestamp" to Date().toString(),
                 ),
             )
