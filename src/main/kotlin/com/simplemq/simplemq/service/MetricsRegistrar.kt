@@ -27,6 +27,11 @@ class MetricsRegistrar(
     }
 
     fun registerGaugesForQueue(queueId: UUID) {
+        // Guard Clause: If we already have gauges for this ID, don't create more!
+        if (registeredGauges.containsKey(queueId)) {
+            return
+        }
+
         val gauges = mutableListOf<Gauge>()
 
         val maxDeliveries: Int =
