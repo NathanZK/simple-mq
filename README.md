@@ -507,33 +507,30 @@ A k6 load test was run against the production VM via Grafana Cloud k6 — 10 VUs
 
 ### Results
 
-| Metric | Value |
-|---|---|
-| Total requests | 16,749 |
-| HTTP failures | 0 |
-| Peak RPS | 353 |
-| Sustained RPS | ~88 |
-| P95 latency | 255ms |
+| Metric | Baseline (Apr 5) | Latest (Apr 17) |
+|--------|-----------------|-----------------|
+| Total requests | 8,500 | 33,600 |
+| HTTP failures | 0 | 0 |
+| Peak RPS | 190 | 426 |
+| P95 latency | 510ms | 222ms |
 
-![K6 Load Testing](assets/k6-load-testing.png)
-
-### Dashboard
-
-![Grafana Dashboard 1](assets/grafana-dashboard-1.png)
-![Grafana Dashboard 2](assets/grafana-dashboard-2.png)
+![Baseline vs Latest](assets/k6-comparison.png)
 
 ### Findings
 
-The service handled all requests without errors. Throughput nearly doubled compared to the initial run (190 → 353 peak RPS, P95 510ms → 255ms) following targeted optimizations:
+The service handled all requests without errors across both runs. From baseline to latest: **+296% throughput, −57% P95 latency**.
 
-- **Reduced allocation pressure** by caching Counter instances instead of creating new objects on every operation, and by raising log levels from DEBUG to INFO/WARN across application, Spring Web, and Hibernate SQL loggers — eliminating per-request string construction for every SQL statement and HTTP interaction under load
-- **Fixed memory leaks in the metrics system** — deleted queues were leaving phantom gauges that continued issuing DB queries indefinitely, and the registeredGauges map grew unbounded. Added deregisterGaugesForQueue and wired it into deleteQueue for both queue and DLQ cleanup
+Optimizations applied across runs:
 
-**Bottleneck: GC stop-the-world pauses.** Eden space fills under sustained load from request/response object allocation, triggering stop-the-world pauses — 486ms in the initial run, 348ms in the latest. During these pauses, all request handlers freeze simultaneously, causing latency spikes across every endpoint. Effective concurrency collapses from 10 VUs to ~2 during this period.
+- **Fixed memory leaks in the metrics system** — deleted queues were leaving phantom gauges that continued issuing DB queries indefinitely, and the `registeredGauges` map grew unbounded. Added `deregisterGaugesForQueue` and wired it into `deleteQueue` for both queue and DLQ cleanup
+- **Reduced allocation pressure** by caching `Counter` instances and raising log levels from DEBUG to INFO/WARN — eliminating per-request object construction for every SQL statement and HTTP interaction under load
+- **Tuned HikariCP for the e2-micro** — fixed pool size at 6 (`minimum-idle` = `maximum-pool-size`) eliminates on-demand connection creation during traffic spikes; TLS handshake latency was driving P99 outliers under CPU saturation
 
-**Recovery was clean.** Latency returned to baseline immediately after load tests ended — no OOM, no connection pool exhaustion, no runaway state.
+**Bottleneck: GC stop-the-world pauses.** Eden space fills under sustained load from request/response object allocation, triggering stop-the-world pauses. During these pauses all request handlers freeze simultaneously, causing latency spikes across every endpoint.
 
-**GC algorithm comparison.** Serial GC was evaluated as an alternative. It performed worse — P99 increased and peak RPS dropped from 190 to 173. Serial GC is designed for single-threaded batch workloads; under concurrent load the single-threaded collector takes longer to clear Eden than the default Parallel GC. Reverted.
+**GC algorithm comparison.** Serial GC was evaluated as an alternative. It performed worse — P95 increased from 510ms to 729ms and peak RPS dropped from 190 to 173. Serial GC is designed for single-threaded batch workloads; under concurrent load the single-threaded collector takes longer to clear Eden than the default Parallel GC. Reverted.
+
+**Recovery was clean.** Latency returned to baseline immediately after each load test — no OOM, no connection pool exhaustion, no runaway state.
 
 ### Context
 
