@@ -7,7 +7,7 @@ variable "gcp_project" {
 variable "gcp_region" {
   description = "GCP region"
   type        = string
-  default     = "us-central1"
+  default     = "us-east1"
 }
 
 variable "gcp_credentials_path" {

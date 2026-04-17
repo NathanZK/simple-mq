@@ -19,7 +19,7 @@ This directory contains Terraform configuration to provision a GCP e2-micro VM f
 ```bash
 gcloud storage buckets create gs://simple-mq-tf-state \
     --default-storage-class=STANDARD \
-    --location=US_CENTRAL1 \
+    --location=US_EAST1 \
     --uniform-bucket-level-access \
     --public-access-prevention
 ```
@@ -59,8 +59,8 @@ terraform apply
 - **Machine Type**: e2-micro
 - **OS**: Debian 12
 - **Boot Disk**: 20 GB pd-balanced
-- **Region**: us-central1
-- **Zone**: us-central1-a
+- **Region**: us-east1
+- **Zone**: us-east1-b
 
 ### Network Configuration
 - **SSH**: Port 22 open from anywhere
