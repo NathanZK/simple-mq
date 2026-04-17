@@ -36,6 +36,17 @@ class QueueService(
         private const val MESSAGE_NOT_FOUND_ERROR = "Message not found"
     }
 
+    /**
+     * Register (if needed) and increment a Micrometer counter for a specific queue outcome.
+     *
+     * If `queueId` cannot be found in the repository and `outcome` is not `"queue_not_found"`,
+     * the method returns without creating or incrementing a counter. Counters are cached by
+     * the composite key `"$name:$queueId:$outcome"` and are created with `queue_id` and `outcome` tags.
+     *
+     * @param name The metric name to increment (e.g., `simplemq.enqueue.total`).
+     * @param queueId The queue UUID as a string.
+     * @param outcome The outcome label for the counter (e.g., `success`, `queue_not_found`, `queue_full`, `empty`, `message_not_found`).
+     */
     private fun incrementCounter(
         name: String,
         queueId: String,
@@ -60,6 +71,15 @@ class QueueService(
         counter.increment()
     }
 
+    /**
+     * Removes cached counters and MeterRegistry meters associated with the given queue.
+     *
+     * Scans the in-memory counterCache for keys containing ":$queueId:" and removes each cached
+     * Counter from both the cache and the MeterRegistry. Also scans the MeterRegistry and removes
+     * any meters whose `queue_id` tag equals the provided queueId.
+     *
+     * @param queueId The queue identifier (UUID string) whose counters and meters should be deregistered.
+     */
     private fun deregisterCountersForQueue(queueId: String) {
         val keysToRemove = counterCache.keys.filter { it.contains(":$queueId:") }
         keysToRemove.forEach { key ->
@@ -76,6 +96,12 @@ class QueueService(
             }
     }
 
+    /**
+     * Creates and persists a new queue with the provided configuration and registers gauges for it.
+     *
+     * @param request Configuration for the new queue (queueName, queueSize, visibilityTimeout, maxDeliveries).
+     * @return The UUID of the newly created queue.
+     */
     fun createQueue(request: CreateQueueRequest): CreateQueueResponse {
         val queue =
             Queue(
@@ -431,6 +457,16 @@ class QueueService(
         )
     }
 
+    /**
+     * Deletes a queue and all its messages, then removes associated metrics.
+     *
+     * Deletes every message belonging to the specified queue, removes the queue record,
+     * deregisters gauges and cached counters/meters tied to the queue, and records a
+     * delete counter outcome.
+     *
+     * @param queueId The string representation of the queue UUID to delete.
+     * @throws IllegalArgumentException if no queue exists with the given ID (also increments the delete counter with outcome `queue_not_found`).
+     */
     @Transactional
     fun deleteQueue(queueId: String) {
         val queueIdAsUUID = UUID.fromString(queueId)

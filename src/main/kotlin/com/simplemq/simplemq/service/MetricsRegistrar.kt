@@ -19,6 +19,11 @@ class MetricsRegistrar(
 ) : ApplicationListener<ApplicationReadyEvent> {
     private val registeredGauges = ConcurrentHashMap<UUID, MutableList<Gauge>>()
 
+    /**
+     * Ensures per-queue Micrometer gauges are registered once the application has finished starting.
+     *
+     * Triggers registration of metrics for all known queues so their gauges are available after startup.
+     */
     override fun onApplicationEvent(event: ApplicationReadyEvent) {
         val queues = queueRepository.findAll()
         queues.forEach { queue ->
@@ -26,6 +31,15 @@ class MetricsRegistrar(
         }
     }
 
+    /**
+     * Register Micrometer gauges for the given queue and track them so they can be removed later.
+     *
+     * Registers three gauges tagged with the queue's ID: queue depth, in-flight message count, and
+     * age of the oldest waiting message (seconds). If gauges for the given `queueId` are already
+     * registered, the function returns without creating duplicates.
+     *
+     * @param queueId The UUID of the queue for which to register metrics.
+     */
     fun registerGaugesForQueue(queueId: UUID) {
         // Guard Clause: If we already have gauges for this ID, don't create more!
         if (registeredGauges.containsKey(queueId)) {
