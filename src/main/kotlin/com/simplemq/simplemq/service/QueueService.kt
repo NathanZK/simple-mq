@@ -41,6 +41,12 @@ class QueueService(
         queueId: String,
         outcome: String,
     ) {
+        // Guard clause: only register counters for existing queues
+        val queueIdAsUUID = UUID.fromString(queueId)
+        if (!queueRepository.existsById(queueIdAsUUID) && outcome != "queue_not_found") {
+            return
+        }
+
         val key = "$name:$queueId:$outcome"
         val counter =
             counterCache.computeIfAbsent(
@@ -52,6 +58,22 @@ class QueueService(
                     .register(meterRegistry)
             }
         counter.increment()
+    }
+
+    private fun deregisterCountersForQueue(queueId: String) {
+        val keysToRemove = counterCache.keys.filter { it.contains(":$queueId:") }
+        keysToRemove.forEach { key ->
+            counterCache.remove(key)?.let { counter ->
+                meterRegistry.remove(counter)
+            }
+        }
+
+        // Also remove any meters with queue_id tag from the registry directly
+        meterRegistry.getMeters()
+            .filter { it.getId().getTag("queue_id") == queueId }
+            .forEach { meter ->
+                meterRegistry.remove(meter)
+            }
     }
 
     fun createQueue(request: CreateQueueRequest): CreateQueueResponse {
@@ -430,5 +452,8 @@ class QueueService(
         metricsRegistrar.deregisterGaugesForQueue(queueIdAsUUID)
 
         incrementCounter("simplemq.delete_queue.total", queueId, "success")
+
+        // Deregister counters for the deleted queue
+        deregisterCountersForQueue(queueId)
     }
 }
