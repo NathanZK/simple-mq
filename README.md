@@ -298,7 +298,7 @@ Consumer ──► Queue Service ──►
 
 ### Current Deployment
 
-The service runs as a single instance on a GCP e2-micro (`us-central1-a`) with no load balancer. Both the queue service and PostgreSQL run as Docker containers managed by Docker Compose on the same VM. Infrastructure is provisioned via Terraform with GCS remote state.
+The service runs as a single instance on a GCP e2-micro (`us-east1-b`) with no load balancer. Both the queue service and PostgreSQL run as Docker containers managed by Docker Compose on the same VM. Infrastructure is provisioned via Terraform with GCS remote state.
 
 ### Components
 
@@ -561,7 +561,7 @@ The `-Xmx384m` heap ceiling was set deliberately to prevent OOM on a 1GB VM shar
 
 ### Infrastructure
 
-- **Cloud:** GCP `us-central1-a`
+- **Cloud:** GCP `us-east1-b`
 - **VM:** e2-micro (0.25 vCPU, 1GB RAM)
 - **Swap:** 1GB swapfile at `/swapfile`, persistent via `/etc/fstab`
 - **Runtime:** Docker Compose
