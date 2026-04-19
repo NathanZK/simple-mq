@@ -29,7 +29,7 @@ resource "google_service_account" "vm_sa" {
 resource "google_compute_instance" "simple_mq_vm" {
   name         = "simple-mq-vm"
   machine_type = "e2-micro"
-  zone         = "${var.gcp_region}-b"
+  zone         = "${var.gcp_region}-d"
   allow_stopping_for_update = true
 
   boot_disk {
