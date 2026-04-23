@@ -17,9 +17,9 @@ This directory contains Terraform configuration to provision a GCP e2-micro VM f
 ### 1. Create GCS Bucket for Terraform State
 
 ```bash
-gcloud storage buckets create gs://simple-mq-tf-state \
+gcloud storage buckets create gs://simple-mq-tf-state-uc1 \
     --default-storage-class=STANDARD \
-    --location=US_EAST1 \
+    --location=us-central1 \
     --uniform-bucket-level-access \
     --public-access-prevention
 ```
@@ -59,8 +59,8 @@ terraform apply
 - **Machine Type**: e2-micro
 - **OS**: Debian 12
 - **Boot Disk**: 20 GB pd-balanced
-- **Region**: us-east1
-- **Zone**: us-east1-b
+- **Region**: us-central1
+- **Zone**: us-central1-a
 
 ### Network Configuration
 - **SSH**: Port 22 open from anywhere
@@ -103,10 +103,10 @@ Once deployed, you can:
 
 ```bash
 # Check VM status
-gcloud compute instances describe simple-mq-vm --zone europe-west1-b --project simple-mq
+gcloud compute instances describe simple-mq-vm --zone us-central1-a --project simple-mq
 
 # View startup script output
-gcloud compute instances get-serial-port-output simple-mq-vm --zone europe-west1-b --project simple-mq
+gcloud compute instances get-serial-port-output simple-mq-vm --zone us-central1-a --project simple-mq
 
 # SSH into VM
 ssh appuser@<EXTERNAL_IP>
