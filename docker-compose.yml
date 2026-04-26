@@ -2,6 +2,14 @@ services:
   postgres:
     image: postgres:16
     container_name: simple-mq-postgres
+    # Tuned for GCP e2-micro (1GB RAM). Postgres defaults are sized for much larger machines.
+    # JVM heap: 384MB, HikariCP pool: 6 — max_connections ceiling set accordingly.
+    # shared_buffers kept low to preserve OS page cache headroom for JVM working set.
+    command: >
+      postgres
+      -c shared_buffers=32MB
+      -c effective_cache_size=512MB
+      -c max_connections=20
     environment:
       POSTGRES_DB: simplemq
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
