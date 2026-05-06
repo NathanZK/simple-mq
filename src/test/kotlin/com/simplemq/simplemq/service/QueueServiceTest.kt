@@ -226,7 +226,7 @@ class QueueServiceTest {
         val request = EnqueueMessageRequest(data = "test message data")
 
         // When
-        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+        whenever(queueRepository.incrementMessageCountIfNotFull(queueId)).thenReturn(1)
         whenever(messageRepository.save(any<Message>())).thenAnswer { invocation ->
             invocation.getArgument<Message>(0)
         }
@@ -234,7 +234,7 @@ class QueueServiceTest {
         val response = queueService.enqueueMessage(queueId.toString(), request)
 
         // Then
-        verify(queueRepository, times(1)).findById(queueId)
+        verify(queueRepository, times(1)).incrementMessageCountIfNotFull(queueId)
         verify(messageRepository, times(1)).save(any<Message>())
         assertNotNull(response.messageId)
     }
@@ -256,7 +256,8 @@ class QueueServiceTest {
         val request = EnqueueMessageRequest(data = "test message")
 
         // When
-        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
+        whenever(queueRepository.incrementMessageCountIfNotFull(queueId)).thenReturn(0)
+        whenever(queueRepository.existsById(queueId)).thenReturn(true)
 
         // Then
         val exception =
@@ -264,8 +265,8 @@ class QueueServiceTest {
                 queueService.enqueueMessage(queueId.toString(), request)
             }
 
-        assertEquals("Queue is full (capacity: 1000, current: 1000)", exception.message)
-        verify(queueRepository, times(1)).findById(queueId)
+        assertEquals("Queue is full", exception.message)
+        verify(queueRepository, times(1)).incrementMessageCountIfNotFull(queueId)
         verify(messageRepository, never()).save(any())
     }
 
@@ -276,7 +277,7 @@ class QueueServiceTest {
         val request = EnqueueMessageRequest(data = "test message")
 
         // When
-        whenever(queueRepository.findById(queueId)).thenReturn(Optional.empty())
+        whenever(queueRepository.incrementMessageCountIfNotFull(queueId)).thenReturn(0)
 
         // Then
         val exception =
@@ -285,7 +286,7 @@ class QueueServiceTest {
             }
 
         assertEquals("Queue not found with ID: $queueId", exception.message)
-        verify(queueRepository, times(1)).findById(queueId)
+        verify(queueRepository, times(1)).incrementMessageCountIfNotFull(queueId)
         verify(messageRepository, never()).save(any())
     }
 
