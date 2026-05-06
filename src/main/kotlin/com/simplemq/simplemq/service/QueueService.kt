@@ -145,17 +145,20 @@ class QueueService(
         request: EnqueueMessageRequest,
     ): EnqueueMessageResponse {
         val queueIdAsUUID = UUID.fromString(queueId)
-        val queue =
-            queueRepository.findById(queueIdAsUUID)
-                .orElseThrow {
-                    incrementCounter(ENQUEUE_TOTAL_METRIC, queueId, "queue_not_found")
-                    IllegalArgumentException("Queue not found with ID: $queueId")
-                }
 
-        // Check queue capacity
-        if (queue.currentMessageCount >= queue.queueSize) {
-            incrementCounter(ENQUEUE_TOTAL_METRIC, queueId, "queue_full")
-            throw IllegalStateException("Queue is full (capacity: ${queue.queueSize}, current: ${queue.currentMessageCount})")
+        // Atomically increment counter if not full
+        val rowsUpdated = queueRepository.incrementMessageCountIfNotFull(queueIdAsUUID)
+
+        if (rowsUpdated == 0) {
+            // No rows updated means queue doesn't exist or is full
+            // Check which one to return appropriate error
+            if (!queueRepository.existsById(queueIdAsUUID)) {
+                incrementCounter(ENQUEUE_TOTAL_METRIC, queueId, "queue_not_found")
+                throw IllegalArgumentException("Queue not found with ID: $queueId")
+            } else {
+                incrementCounter(ENQUEUE_TOTAL_METRIC, queueId, "queue_full")
+                throw IllegalStateException("Queue is full")
+            }
         }
 
         // Create message
@@ -167,10 +170,6 @@ class QueueService(
             )
 
         val savedMessage = messageRepository.save(message)
-
-        // Update queue message count
-        val updatedQueue = queue.copy(currentMessageCount = queue.currentMessageCount + 1)
-        queueRepository.save(updatedQueue)
 
         incrementCounter(ENQUEUE_TOTAL_METRIC, queueId, "success")
 

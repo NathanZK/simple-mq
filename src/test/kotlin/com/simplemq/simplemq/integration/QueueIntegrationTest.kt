@@ -15,6 +15,10 @@ import org.springframework.http.HttpStatus
 import org.springframework.jdbc.core.JdbcTemplate
 import java.time.LocalDateTime
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class QueueIntegrationTest : AbstractIntegrationTest() {
     @Autowired
@@ -444,5 +448,177 @@ class QueueIntegrationTest : AbstractIntegrationTest() {
         assertEquals("tiebreaker msg B", secondPageMessages[0]["data"])
         assertNull(secondPage["next_cursor_created_at"]) // EOF
         assertNull(secondPage["next_cursor_message_id"]) // EOF
+    }
+
+    @Test
+    fun `should detect race condition when enqueuing concurrently and updating message count`() {
+        val smallQueueRequest =
+            CreateQueueRequest(
+                queueName = "race-condition-queue-${UUID.randomUUID()}",
+                queueSize = 10,
+                visibilityTimeout = 5,
+                maxDeliveries = 3,
+            )
+
+        val createResponse =
+            restTemplate.postForEntity(
+                "/api/queues",
+                smallQueueRequest,
+                Map::class.java,
+            )
+        assertEquals(HttpStatus.CREATED, createResponse.statusCode)
+        val queueId = createResponse.body!!["queue_id"].toString()
+
+        // Use 2 threads to enqueue concurrently - this will trigger the race condition
+        val numThreads = 2
+        val successfulEnqueues = AtomicInteger(0)
+        val failedEnqueues = AtomicInteger(0)
+        val latch = CountDownLatch(numThreads)
+
+        val executor = Executors.newFixedThreadPool(numThreads)
+
+        repeat(numThreads) { i ->
+            executor.submit {
+                try {
+                    val enqueueRequest = EnqueueMessageRequest(data = "concurrent message $i")
+                    val response =
+                        restTemplate.postForEntity(
+                            "/api/queues/$queueId/messages",
+                            enqueueRequest,
+                            Map::class.java,
+                        )
+
+                    if (response.statusCode == HttpStatus.CREATED) {
+                        successfulEnqueues.incrementAndGet()
+                    } else if (response.statusCode == HttpStatus.TOO_MANY_REQUESTS) {
+                        failedEnqueues.incrementAndGet()
+                    }
+                } finally {
+                    latch.countDown()
+                }
+            }
+        }
+
+        latch.await(30, TimeUnit.SECONDS)
+        executor.shutdown()
+
+        // Get the actual message count from the database
+        val actualMessageCount =
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM messages WHERE queue_id = CAST('$queueId' AS uuid)",
+                Int::class.java,
+            ) ?: 0
+
+        // Get the queue's current_message_count from the database
+        val queueMessageCount =
+            jdbcTemplate.queryForObject(
+                "SELECT current_message_count FROM queues WHERE queue_id = CAST('$queueId' AS uuid)",
+                Int::class.java,
+            ) ?: 0
+
+        // This assertion will fail due to the race condition:
+        // The queue's current_message_count will be inconsistent with the actual message count
+        // because both threads read the same counter value before incrementing
+        assertEquals(
+            actualMessageCount,
+            queueMessageCount,
+            "Race condition detected: Queue counter ($queueMessageCount) doesn't match actual message count ($actualMessageCount). " +
+                "Successful HTTP responses: $successfulEnqueues, Failed HTTP responses: $failedEnqueues",
+        )
+    }
+
+    @Test
+    fun `only one thread should succeed when enqueuing concurrently with capacity 1`() {
+        // Create a queue with capacity 1
+        val smallQueueRequest =
+            CreateQueueRequest(
+                queueName = "capacity-one-queue-${UUID.randomUUID()}",
+                queueSize = 1,
+                visibilityTimeout = 5,
+                maxDeliveries = 3,
+            )
+
+        val createResponse =
+            restTemplate.postForEntity(
+                "/api/queues",
+                smallQueueRequest,
+                Map::class.java,
+            )
+        assertEquals(HttpStatus.CREATED, createResponse.statusCode)
+        val queueId = createResponse.body!!["queue_id"].toString()
+
+        // Two threads try to enqueue concurrently to empty queue with capacity 1
+        val numThreads = 2
+        val successfulEnqueues = AtomicInteger(0)
+        val failedEnqueues = AtomicInteger(0)
+        val latch = CountDownLatch(numThreads)
+
+        val executor = Executors.newFixedThreadPool(numThreads)
+
+        repeat(numThreads) { i ->
+            executor.submit {
+                try {
+                    val enqueueRequest = EnqueueMessageRequest(data = "concurrent message $i")
+                    val response =
+                        restTemplate.postForEntity(
+                            "/api/queues/$queueId/messages",
+                            enqueueRequest,
+                            Map::class.java,
+                        )
+
+                    if (response.statusCode == HttpStatus.CREATED) {
+                        successfulEnqueues.incrementAndGet()
+                    } else if (response.statusCode == HttpStatus.TOO_MANY_REQUESTS) {
+                        failedEnqueues.incrementAndGet()
+                    }
+                } finally {
+                    latch.countDown()
+                }
+            }
+        }
+
+        latch.await(30, TimeUnit.SECONDS)
+        executor.shutdown()
+
+        // Verify final state: exactly 1 message should be in the queue
+        val actualMessageCount =
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM messages WHERE queue_id = CAST('$queueId' AS uuid)",
+                Int::class.java,
+            ) ?: 0
+
+        val queueMessageCount =
+            jdbcTemplate.queryForObject(
+                "SELECT current_message_count FROM queues WHERE queue_id = CAST('$queueId' AS uuid)",
+                Int::class.java,
+            ) ?: 0
+
+        // With atomic increment, exactly 1 message should be enqueued (capacity = 1)
+        assertEquals(
+            1,
+            actualMessageCount,
+            "Expected exactly 1 message in queue (capacity 1), but found $actualMessageCount. " +
+                "Successful: $successfulEnqueues, Failed: $failedEnqueues",
+        )
+
+        // Counter should match actual count
+        assertEquals(
+            actualMessageCount,
+            queueMessageCount,
+            "Counter mismatch: counter=$queueMessageCount, actual=$actualMessageCount",
+        )
+
+        // Exactly 1 should succeed, 1 should fail
+        assertEquals(
+            1,
+            successfulEnqueues.get(),
+            "Expected exactly 1 successful enqueue, but got ${successfulEnqueues.get()}",
+        )
+
+        assertEquals(
+            1,
+            failedEnqueues.get(),
+            "Expected exactly 1 failed enqueue due to full queue, but got ${failedEnqueues.get()}",
+        )
     }
 }
