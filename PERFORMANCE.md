@@ -21,33 +21,14 @@ Load testing is conducted via [Grafana Cloud Synthetic Monitoring](https://grafa
 
 **Root cause:** GC stop-the-world pauses (up to 486ms, Eden space at 96%) compounded by thread pool stalling. An OOM incident confirmed the JVM was killed by the Linux OOM killer at ~413MB anon-rss.
 
-**Remediation applied before Run 3:**
+**Remediation applied before Run 2:**
 - 1GB swapfile added to the VM
 - JVM heap pinned: `-Xms384m -Xmx384m -XX:MaxMetaspaceSize=128m`
 - Docker Compose `mem_limit: 600m`
 
 ---
 
-### Run 2 — SerialGC Experiment (Apr 5)
-
-| Metric | Value |
-|--------|-------|
-| Total Requests | 7,800 |
-| HTTP Failures | 0 |
-| Peak RPS | 173 req/s |
-| P95 Response Time | 729ms |
-| P99 enqueue | 1,000ms |
-| P99 dequeue | 999ms |
-
-![Run 2](assets/load-test-run-2.png)
-
-**Hypothesis:** `-XX:+UseSerialGC` would reduce GC overhead on a single-core VM.
-
-**Result:** Disproved. P95 degraded from 510ms to 729ms and throughput dropped from 8.5K to 7.8K requests. SerialGC increased stop-the-world pause duration on this workload. Reverted.
-
----
-
-### Run 3 — Metrics Fix + Logging Level (Apr 10)
+### Run 2 — Metrics Fix + Logging Level (Apr 10)
 
 | Metric | Value |
 |--------|-------|
@@ -58,7 +39,7 @@ Load testing is conducted via [Grafana Cloud Synthetic Monitoring](https://grafa
 | P99 enqueue | 492ms |
 | P99 dequeue | 488ms |
 
-![Run 3](assets/load-test-run-3.png)
+![Run 2](assets/load-test-run-2.png)
 
 **Changes shipped:**
 
@@ -88,7 +69,7 @@ Logging accounted for ~7% of total allocations — primarily short-lived objects
 | P99 enqueue | 255ms |
 | P99 dequeue | 256ms |
 
-![Run 4](assets/load-test-run-4.png)
+![Run 3](assets/load-test-run-2.png)
 
 **Root cause identified:** Under load, CPU saturation on the e2-micro (shared-core) caused a death spiral — TLS handshakes with PostgreSQL were taking 500ms+, and HikariCP's default dynamic pool scaling was attempting to create new connections exactly when the CPU was most throttled.
 
@@ -101,7 +82,7 @@ Logging accounted for ~7% of total allocations — primarily short-lived objects
 
 ---
 
-### Run 5 — HikariCP Pool Downscaled to 6 (Apr 17)
+### Run 4 — HikariCP Pool Downscaled to 6 (Apr 17)
 
 | Metric | Value |
 |--------|-------|
@@ -112,7 +93,7 @@ Logging accounted for ~7% of total allocations — primarily short-lived objects
 | P99 enqueue | 245ms |
 | P99 dequeue | 246ms |
 
-![Run 5](assets/load-test-run-5.png)
+![Run 4](assets/load-test-run-3.png)
 
 **Rationale:** With 8 pool connections, each backed by a dedicated thread, the Linux scheduler on the single-core VM was paying increasing context-switching overhead. Reducing to 6 lets the CPU spend more time executing request logic and less time swapping between competing database workers.
 
@@ -128,9 +109,8 @@ Logging accounted for ~7% of total allocations — primarily short-lived objects
 | Run | Date | Change | Requests | Peak RPS | P95 |
 |-----|------|--------|----------|----------|-----|
 | 1 | Apr 5 | Baseline | 8,500 | 190 | 510ms |
-| 2 | Apr 5 | SerialGC (reverted) | 7,800 | 173 | 729ms |
-| 3 | Apr 10 | Metrics fix + log level | 16,700 | 353 | 255ms |
-| 4 | Apr 15 | HikariCP pool=8 | 24,900 | 421 | 247ms |
-| 5 | Apr 17 | HikariCP pool=6 | 33,600 | 426 | 222ms |
+| 2 | Apr 10 | Metrics fix + log level | 16,700 | 353 | 255ms |
+| 3 | Apr 15 | HikariCP pool=8 | 24,900 | 421 | 247ms |
+| 4 | Apr 17 | HikariCP pool=6 | 33,600 | 426 | 222ms |
 
-From Run 1 to Run 5: **+296% throughput, -57% P95 latency**. Zero HTTP failures across all runs.
+From Run 1 to Run 4: **+296% throughput, -57% P95 latency**. Zero HTTP failures across all runs.
