@@ -105,12 +105,10 @@ class QueueService(
     fun createQueue(request: CreateQueueRequest): CreateQueueResponse {
         val queue =
             Queue(
-                queueId = UUID.randomUUID(),
                 queueName = request.queueName,
                 queueSize = request.queueSize,
                 visibilityTimeout = request.visibilityTimeout,
                 maxDeliveries = request.maxDeliveries,
-                currentMessageCount = 0,
             )
 
         val savedQueue = queueRepository.save(queue)
@@ -205,13 +203,10 @@ class QueueService(
                     // Create new DLQ
                     val newDlq =
                         Queue(
-                            queueId = UUID.randomUUID(),
                             queueName = queue.queueName + "-dlq",
                             queueSize = queue.queueSize,
                             visibilityTimeout = queue.visibilityTimeout,
                             maxDeliveries = queue.maxDeliveries,
-                            currentMessageCount = 0,
-                            dlqId = null,
                         )
                     val savedDlq = queueRepository.save(newDlq)
 
@@ -242,7 +237,6 @@ class QueueService(
                 val dlqMessages =
                     messagesToMove.map { exhaustedMessage ->
                         Message(
-                            messageId = UUID.randomUUID(),
                             queueId = finalDlq.queueId,
                             data = exhaustedMessage.data,
                             deliveryCount = exhaustedMessage.deliveryCount,

@@ -1,5 +1,6 @@
 package com.simplemq.simplemq.entity
 
+import com.github.f4b6a3.uuid.UuidCreator
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.Id
@@ -12,7 +13,7 @@ import java.util.UUID
 data class Message(
     @Id
     @Column(name = "message_id")
-    val messageId: UUID = UUID.randomUUID(),
+    val messageId: UUID = UuidCreator.getTimeOrderedEpoch(),
     @Column(name = "queue_id", nullable = false)
     val queueId: UUID,
     @Column(name = "data", nullable = false, columnDefinition = "TEXT")
