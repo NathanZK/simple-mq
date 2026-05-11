@@ -243,16 +243,6 @@ class QueueServiceTest {
     fun `enqueueMessage should throw IllegalStateException when queue is full`() {
         // Given
         val queueId = UUID.randomUUID()
-        val queue =
-            Queue(
-                queueId = queueId,
-                queueName = "test-queue",
-                queueSize = 1000,
-                visibilityTimeout = 30,
-                maxDeliveries = 5,
-                currentMessageCount = 1000,
-            )
-
         val request = EnqueueMessageRequest(data = "test message")
 
         // When
@@ -315,9 +305,16 @@ class QueueServiceTest {
             )
 
         // When
-        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
-        whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(emptyList())
-        whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(message)
+        val updatedMessage =
+            Message(
+                messageId = messageId,
+                queueId = queueId,
+                data = "test message",
+                deliveryCount = 1,
+                visibleAt = now.plusSeconds(queue.visibilityTimeout.toLong()),
+                createdAt = message.createdAt,
+            )
+        whenever(messageRepository.findLockAndUpdateMessageAtomic(any(), any())).thenReturn(updatedMessage)
 
         val response = queueService.dequeueMessage(queueId.toString())
 
@@ -325,8 +322,9 @@ class QueueServiceTest {
         assertNotNull(response.message)
         assertEquals(messageId, response.message!!.messageId)
         assertEquals("test message", response.message!!.data)
+        assertEquals(1, response.message!!.deliveryCount)
         // Check that invisible_until is in the future (within reasonable range)
-        val expectedVisibleTime = LocalDateTime.now().plusSeconds(30)
+        val expectedVisibleTime = LocalDateTime.now().plusSeconds(queue.visibilityTimeout.toLong())
         val actualVisibleTime = response.message!!.invisibleUntil
         assertTrue(
             actualVisibleTime.isAfter(expectedVisibleTime.minusSeconds(5)) &&
@@ -334,14 +332,13 @@ class QueueServiceTest {
         )
 
         // Then verify the service method calls
-        verify(messageRepository, times(1)).updateMessageDelivery(
-            messageId = eq(messageId),
-            deliveryCount = eq(1),
-            visibleAt = any(),
+        verify(messageRepository, times(1)).findLockAndUpdateMessageAtomic(
+            queueId = eq(queueId),
+            now = any(),
         )
 
         // Verify DLQ operations are NOT called since there are no exhausted messages
-        verify(queueRepository, times(1)).findById(queueId) // Only initial queue fetch
+        verify(queueRepository, times(1)).existsById(queueId) // Called in incrementCounter for success metric
         verify(queueRepository, never()).save(any<Queue>())
     }
 
@@ -350,29 +347,19 @@ class QueueServiceTest {
         // Given
         val queueId = UUID.randomUUID()
         val now = LocalDateTime.now()
-        val queue =
-            Queue(
-                queueId = queueId,
-                queueName = "test-queue",
-                queueSize = 1000,
-                visibilityTimeout = 30,
-                maxDeliveries = 5,
-                currentMessageCount = 0,
-            )
 
         // When
-        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
-        whenever(messageRepository.findExhaustedMessages(queueId, 5, now)).thenReturn(emptyList())
-        whenever(messageRepository.findAndLockNextAvailableMessage(queueId, 5, now)).thenReturn(null)
+        whenever(messageRepository.findLockAndUpdateMessageAtomic(queueId, now)).thenReturn(null)
 
         val response = queueService.dequeueMessage(queueId.toString())
 
         // Then
         assertNull(response.message)
-        verify(messageRepository, never()).updateMessageDelivery(any(), any(), any())
+        verify(messageRepository, times(1)).countExhaustedMessages(eq(queueId), any())
+        verify(messageRepository, times(1)).findLockAndUpdateMessageAtomic(eq(queueId), any())
 
         // Verify DLQ operations are NOT called since there are no exhausted messages
-        verify(queueRepository, times(1)).findById(queueId) // Only initial queue fetch
+        verify(queueRepository, times(1)).existsById(queueId) // Called in incrementCounter for empty metric
         verify(queueRepository, never()).save(any<Queue>())
     }
 
@@ -401,55 +388,25 @@ class QueueServiceTest {
                 currentMessageCount = 0,
                 dlqId = null,
             )
-        val exhaustedMessages =
-            listOf(
-                Message(
-                    messageId = UUID.randomUUID(),
-                    queueId = queueId,
-                    data = "exhausted",
-                    deliveryCount = 5,
-                    visibleAt = now.minusSeconds(10),
-                ),
-            )
-
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
-        whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(exhaustedMessages)
+        whenever(queueRepository.findById(dlqId)).thenReturn(Optional.of(createdDlq))
         whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(null)
-        whenever(messageRepository.saveAll(any<List<Message>>())).thenReturn(emptyList())
-        whenever(queueRepository.save(any<Queue>())).thenReturn(createdDlq, queue.copy(dlqId = createdDlq.queueId))
+        whenever(messageRepository.countExhaustedMessages(any(), any())).thenReturn(2)
+        whenever(messageRepository.moveMessagesToDlqAtomic(any(), any(), any(), any())).thenReturn(2)
+        whenever(queueRepository.getOrCreateDlqAndUpdateParent(any(), any())).thenReturn(createdDlq)
 
         queueService.dequeueMessage(queueId.toString())
 
-        // Once for DLQ creation, once for parent queue update, once for parent count update, once for DLQ count update
-        verify(queueRepository, times(4)).save(any<Queue>())
-
-        // Verify that the parent queue was updated with the correct dlqId
-        val queueCaptor = ArgumentCaptor.forClass(Queue::class.java)
-        verify(queueRepository, times(4)).save(capture(queueCaptor))
-
-        val savedQueues = queueCaptor.allValues
-
-        // At minimum, we should have:
-        // 1. A DLQ created with dlqId = null
-        // 2. The parent queue updated with dlqId pointing to the DLQ
-        val dlqSaves = savedQueues.filter { it.dlqId == null && it.queueName.endsWith("-dlq") }
-        val parentQueueUpdates = savedQueues.filter { it.queueId == queueId && it.dlqId != null }
-
-        assertTrue(dlqSaves.isNotEmpty(), "Should have at least one DLQ creation")
-        assertTrue(parentQueueUpdates.isNotEmpty(), "Should have at least one parent queue update with dlqId set")
-
-        // Verify the DLQ was created correctly
-        val actualCreatedDlq = dlqSaves.first()
-        assertNull(actualCreatedDlq.dlqId, "DLQ should have dlqId = null")
-        assertTrue(actualCreatedDlq.queueName.endsWith("-dlq"), "DLQ should have -dlq suffix")
-
-        // Verify the parent queue was updated to point to some DLQ
-        val updatedParentQueue = parentQueueUpdates.first()
-        assertNotNull(updatedParentQueue.dlqId, "Parent queue should have dlqId set")
-
-        verify(messageRepository, times(1)).saveAll(any<List<Message>>())
-        verify(messageRepository, times(1)).deleteAll(exhaustedMessages)
+        // Verify atomic DLQ operations - single method does both get/create and parent update
+        verify(queueRepository, times(1)).getOrCreateDlqAndUpdateParent(any(), any())
+        verify(messageRepository, times(1)).moveMessagesToDlqAtomic(
+            sourceQueueId = eq(queueId),
+            dlqId = eq(createdDlq.queueId),
+            availableSpace = eq(1000),
+            // Available space in DLQ (1000-0=1000)
+            now = any(),
+        )
     }
 
     @Test
@@ -482,7 +439,6 @@ class QueueServiceTest {
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
         whenever(queueRepository.findById(dlqId)).thenReturn(Optional.of(existingDlq))
-        whenever(messageRepository.findExhaustedMessages(queueId, 5, now)).thenReturn(emptyList())
         whenever(messageRepository.findAndLockNextAvailableMessage(queueId, 5, now)).thenReturn(null)
 
         queueService.dequeueMessage(queueId.toString())
@@ -519,47 +475,33 @@ class QueueServiceTest {
                 currentMessageCount = 2,
                 dlqId = null,
             )
-        val exhaustedMessages =
-            listOf(
-                Message(
-                    messageId = messageId1,
-                    queueId = queueId,
-                    data = "exhausted message 1",
-                    deliveryCount = 5,
-                    visibleAt = now.minusSeconds(10),
-                ),
-                Message(
-                    messageId = messageId2,
-                    queueId = queueId,
-                    data = "exhausted message 2",
-                    deliveryCount = 5,
-                    visibleAt = now.minusSeconds(5),
-                ),
-            )
-
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
         whenever(queueRepository.findById(dlqId)).thenReturn(Optional.of(dlq))
-        whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(exhaustedMessages)
         whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(null)
-        whenever(messageRepository.saveAll(any<List<Message>>())).thenReturn(emptyList())
-        whenever(queueRepository.save(any<Queue>())).thenReturn(queue, dlq)
+        whenever(messageRepository.countExhaustedMessages(any(), any())).thenReturn(2)
+        whenever(messageRepository.moveMessagesToDlqAtomic(any(), any(), any(), any())).thenReturn(2)
+        whenever(queueRepository.getOrCreateDlqAndUpdateParent(any(), any())).thenReturn(dlq)
 
         queueService.dequeueMessage(queueId.toString())
 
         // Then
-        verify(messageRepository, times(1)).saveAll(any<List<Message>>())
-        verify(messageRepository, times(1)).deleteAll(exhaustedMessages)
-        verify(queueRepository, times(1)).save(queue) // Save updated source queue
-        verify(queueRepository, times(1)).save(dlq) // Save updated DLQ
+        verify(messageRepository, times(1)).moveMessagesToDlqAtomic(
+            sourceQueueId = eq(queueId),
+            dlqId = eq(dlq.queueId),
+            availableSpace = eq(998),
+            // Available space in DLQ (1000-2=998)
+            now = any(),
+        )
+        verify(queueRepository, times(1)).getOrCreateDlqAndUpdateParent(any(), any())
     }
 
     @Test
     fun `dequeueMessage should move partial messages when DLQ has limited space`() {
         // Given
         val queueId = UUID.randomUUID()
-        val dlqId = UUID.randomUUID()
-        val now = LocalDateTime.now()
+        val dlqId = UUID.nameUUIDFromBytes((queueId.toString() + "-dlq").toByteArray())
+
         val queue =
             Queue(
                 queueId = queueId,
@@ -580,46 +522,27 @@ class QueueServiceTest {
                 currentMessageCount = 3,
                 dlqId = null,
             )
-        val exhaustedMessages =
-            listOf(
-                Message(
-                    messageId = UUID.randomUUID(),
-                    queueId = queueId,
-                    data = "msg1",
-                    deliveryCount = 5,
-                    visibleAt = now.minusSeconds(20),
-                ),
-                Message(
-                    messageId = UUID.randomUUID(),
-                    queueId = queueId,
-                    data = "msg2",
-                    deliveryCount = 5,
-                    visibleAt = now.minusSeconds(15),
-                ),
-                Message(
-                    messageId = UUID.randomUUID(),
-                    queueId = queueId,
-                    data = "msg3",
-                    deliveryCount = 5,
-                    visibleAt = now.minusSeconds(10),
-                ),
-            )
 
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
         whenever(queueRepository.findById(dlqId)).thenReturn(Optional.of(almostFullDlq))
-        whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(exhaustedMessages)
         whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(null)
-        whenever(messageRepository.saveAll(any<List<Message>>())).thenReturn(emptyList())
-        whenever(queueRepository.save(any<Queue>())).thenReturn(queue, almostFullDlq)
+        whenever(messageRepository.countExhaustedMessages(any(), any())).thenReturn(2)
+        whenever(messageRepository.moveMessagesToDlqAtomic(any(), any(), any(), any())).thenReturn(2)
+        whenever(queueRepository.getOrCreateDlqAndUpdateParent(any(), any())).thenReturn(almostFullDlq)
 
         queueService.dequeueMessage(queueId.toString())
 
-        // Then - Should only move 2 messages (available space), not all 3
-        verify(messageRepository, times(1)).saveAll(any<List<Message>>())
-        verify(messageRepository, times(1)).deleteAll(any<List<Message>>()) // Only 2 messages deleted
-        verify(queueRepository, times(1)).save(queue) // Source queue count reduced by 2
-        verify(queueRepository, times(1)).save(almostFullDlq) // DLQ count increased by 2
+        verify(messageRepository, times(1)).countExhaustedMessages(eq(queueId), any())
+        verify(messageRepository, times(1)).findLockAndUpdateMessageAtomic(eq(queueId), any())
+        verify(queueRepository, times(1)).getOrCreateDlqAndUpdateParent(any(), any())
+        verify(messageRepository, times(1)).moveMessagesToDlqAtomic(
+            sourceQueueId = eq(queueId),
+            dlqId = eq(almostFullDlq.queueId),
+            availableSpace = eq(2),
+            // Available space in DLQ (5-3=2)
+            now = any(),
+        )
     }
 
     @Test
@@ -648,37 +571,18 @@ class QueueServiceTest {
                 currentMessageCount = 5,
                 dlqId = null,
             )
-        val exhaustedMessages =
-            listOf(
-                Message(
-                    messageId = UUID.randomUUID(),
-                    queueId = queueId,
-                    data = "msg1",
-                    deliveryCount = 5,
-                    visibleAt = now.minusSeconds(20),
-                ),
-                Message(
-                    messageId = UUID.randomUUID(),
-                    queueId = queueId,
-                    data = "msg2",
-                    deliveryCount = 5,
-                    visibleAt = now.minusSeconds(15),
-                ),
-            )
-
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
         whenever(queueRepository.findById(dlqId)).thenReturn(Optional.of(fullDlq))
-        whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(exhaustedMessages)
         whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(null)
-
+        whenever(messageRepository.countExhaustedMessages(any(), any())).thenReturn(2)
+        whenever(queueRepository.getOrCreateDlqAndUpdateParent(any(), any())).thenReturn(fullDlq)
         queueService.dequeueMessage(queueId.toString())
 
-        // Then - No messages should be moved since DLQ is full
-        verify(messageRepository, never()).saveAll(any<List<Message>>())
-        verify(messageRepository, never()).deleteAll(any<List<Message>>())
-        verify(queueRepository, never()).save(queue) // Source queue count unchanged
-        verify(queueRepository, never()).save(fullDlq) // DLQ count unchanged
+        // Then - No messages should be moved since DLQ is full (availableSpace=0)
+        // The atomic operation is not called when availableSpace is 0
+        verify(messageRepository, never()).moveMessagesToDlqAtomic(any(), any(), any(), any())
+        verify(queueRepository, times(1)).getOrCreateDlqAndUpdateParent(any(), any())
 
         // No exception should be thrown - this is a graceful degradation
     }
@@ -708,23 +612,29 @@ class QueueServiceTest {
             )
 
         // When
-        whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
-        whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(emptyList())
-        whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(message)
+        val updatedMessage =
+            Message(
+                messageId = messageId,
+                queueId = queueId,
+                data = "test message",
+                deliveryCount = 3,
+                visibleAt = now.plusSeconds(queue.visibilityTimeout.toLong()),
+                createdAt = message.createdAt,
+            )
+        whenever(messageRepository.findLockAndUpdateMessageAtomic(any(), any())).thenReturn(updatedMessage)
 
         val response = queueService.dequeueMessage(queueId.toString())
 
         // Then
-        verify(messageRepository, times(1)).updateMessageDelivery(
-            messageId = eq(messageId),
-            deliveryCount = eq(3),
-            visibleAt = any(),
+        verify(messageRepository, times(1)).findLockAndUpdateMessageAtomic(
+            queueId = eq(queueId),
+            now = any(),
         )
 
         assertNotNull(response.message)
         assertEquals(messageId, response.message!!.messageId)
         // Check that invisible_until is in the future (within reasonable range)
-        val expectedVisibleTime = LocalDateTime.now().plusSeconds(45)
+        val expectedVisibleTime = LocalDateTime.now().plusSeconds(queue.visibilityTimeout.toLong())
         val actualVisibleTime = response.message!!.invisibleUntil
         assertTrue(
             actualVisibleTime.isAfter(expectedVisibleTime.minusSeconds(5)) &&
@@ -758,45 +668,25 @@ class QueueServiceTest {
                 currentMessageCount = 0,
                 dlqId = null,
             )
-        val exhaustedMessages =
-            listOf(
-                Message(
-                    messageId = UUID.randomUUID(),
-                    queueId = queueId,
-                    data = "msg1",
-                    deliveryCount = 3,
-                    visibleAt = now.minusSeconds(20),
-                ),
-                Message(
-                    messageId = UUID.randomUUID(),
-                    queueId = queueId,
-                    data = "msg2",
-                    deliveryCount = 4,
-                    visibleAt = now.minusSeconds(15),
-                ),
-                Message(
-                    messageId = UUID.randomUUID(),
-                    queueId = queueId,
-                    data = "msg3",
-                    deliveryCount = 3,
-                    visibleAt = now.minusSeconds(10),
-                ),
-            )
-
         // When
         whenever(queueRepository.findById(queueId)).thenReturn(Optional.of(queue))
         whenever(queueRepository.findById(dlqId)).thenReturn(Optional.of(dlq))
-        whenever(messageRepository.findExhaustedMessages(any(), any(), any())).thenReturn(exhaustedMessages)
         whenever(messageRepository.findAndLockNextAvailableMessage(any(), any(), any())).thenReturn(null)
-        whenever(messageRepository.saveAll(any<List<Message>>())).thenReturn(emptyList())
-        whenever(queueRepository.save(any<Queue>())).thenReturn(queue, dlq)
+        whenever(messageRepository.countExhaustedMessages(any(), any())).thenReturn(3)
+        whenever(messageRepository.moveMessagesToDlqAtomic(any(), any(), any(), any())).thenReturn(3)
+        whenever(queueRepository.getOrCreateDlqAndUpdateParent(any(), any())).thenReturn(dlq)
 
         queueService.dequeueMessage(queueId.toString())
 
         // Then
-        verify(messageRepository, times(1)).saveAll(any<List<Message>>())
-        verify(messageRepository, times(1)).deleteAll(exhaustedMessages)
-        verify(queueRepository, times(2)).save(any<Queue>()) // Once for source queue, once for DLQ
+        verify(messageRepository, times(1)).moveMessagesToDlqAtomic(
+            sourceQueueId = eq(queueId),
+            dlqId = eq(dlq.queueId),
+            availableSpace = eq(1000),
+            // Available space in DLQ (1000-0=1000)
+            now = any(),
+        )
+        verify(queueRepository, times(1)).getOrCreateDlqAndUpdateParent(any(), any())
     }
 
     @Test

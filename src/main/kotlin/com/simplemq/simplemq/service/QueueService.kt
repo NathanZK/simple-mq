@@ -33,6 +33,7 @@ class QueueService(
         private const val ENQUEUE_TOTAL_METRIC = "simplemq.enqueue.total"
         private const val DEQUEUE_TOTAL_METRIC = "simplemq.dequeue.total"
         private const val REQUEUE_TOTAL_METRIC = "simplemq.requeue.total"
+        private const val DLQ_FAILED_METRIC = "simplemq.dlq.failed_total"
         private const val MESSAGE_NOT_FOUND_ERROR = "Message not found"
     }
 
@@ -46,11 +47,13 @@ class QueueService(
      * @param name The metric name to increment (e.g., `simplemq.enqueue.total`).
      * @param queueId The queue UUID as a string.
      * @param outcome The outcome label for the counter (e.g., `success`, `queue_not_found`, `queue_full`, `empty`, `message_not_found`).
+     * @param amount The amount to increment by (defaults to 1.0).
      */
     private fun incrementCounter(
         name: String,
         queueId: String,
         outcome: String,
+        amount: Double = 1.0,
     ) {
         // Guard clause: only register counters for existing queues
         val queueIdAsUUID = UUID.fromString(queueId)
@@ -68,7 +71,7 @@ class QueueService(
                     .tag("outcome", outcome)
                     .register(meterRegistry)
             }
-        counter.increment()
+        counter.increment(amount)
     }
 
     /**
@@ -179,121 +182,102 @@ class QueueService(
         val queueIdAsUUID = UUID.fromString(queueId)
         val now = LocalDateTime.now()
 
-        // Get the queue first
-        val queue =
-            queueRepository
-                .findById(queueIdAsUUID)
-                .orElseThrow {
-                    incrementCounter(DEQUEUE_TOTAL_METRIC, queueId, "queue_not_found")
-                    IllegalArgumentException("Queue not found with ID: $queueId")
-                }
+        // Move exhausted messages to DLQ
+        moveExhaustedMessagesToDLQ(queueIdAsUUID, now)
 
-        // Step 1: Find exhausted messages first
-        val exhaustedMessages =
-            messageRepository.findExhaustedMessages(
+        // Dequeue a single message
+        return dequeueSingleMessage(queueIdAsUUID, now)
+    }
+
+    /**
+     * Orchestrates the atomic migration of messages that have exceeded their
+     * maximum delivery attempts to a Dead Letter Queue (DLQ).
+     *
+     * DESIGN TRADE-OFF: This implementation favors "Graceful Degradation."
+     * To prevent blocking the primary dequeue pipeline, we avoid pessimistic
+     * locking on the DLQ. Consequently, the DLQ may temporarily exceed its
+     * configured capacity during high-concurrency bursts, ensuring "poison
+     * messages" are evicted without stalling primary workers.
+     *
+     * PRECONDITION: The source queue must exist. Missing queues are handled
+     * gracefully with early exit (Zero-Chatter pattern) rather than exceptions.
+     *
+     * @param queueIdAsUUID The source queue identifier.
+     * @param now The reference timestamp for message visibility.
+     */
+    private fun moveExhaustedMessagesToDLQ(
+        queueIdAsUUID: UUID,
+        now: LocalDateTime,
+    ) {
+        // Step 1: Check if there are any exhausted messages to process
+        val totalExhausted =
+            messageRepository.countExhaustedMessages(
                 queueId = queueIdAsUUID,
-                maxDeliveries = queue.maxDeliveries,
                 now = now,
             )
+        if (totalExhausted == 0) return
 
-        // Step 2: Only create/get DLQ if there are exhausted messages
-        if (exhaustedMessages.isNotEmpty()) {
-            val finalDlq =
-                if (queue.dlqId == null) {
-                    // Create new DLQ
-                    val newDlq =
-                        Queue(
-                            queueName = queue.queueName + "-dlq",
-                            queueSize = queue.queueSize,
-                            visibilityTimeout = queue.visibilityTimeout,
-                            maxDeliveries = queue.maxDeliveries,
-                        )
-                    val savedDlq = queueRepository.save(newDlq)
+        // Step 2: Ensure DLQ exists and parent queue references it
+        val dlqId = UUID.nameUUIDFromBytes((queueIdAsUUID.toString() + "-dlq").toByteArray())
+        val dlq =
+            queueRepository.getOrCreateDlqAndUpdateParent(queueIdAsUUID, dlqId)
+                ?: throw IllegalArgumentException("Source queue not found: $queueIdAsUUID")
 
-                    metricsRegistrar.registerGaugesForQueue(savedDlq.queueId)
+        // Step 3: Register metrics for the DLQ with type="dlq" tag
+        metricsRegistrar.registerGaugesForQueue(dlq.queueId, type = "dlq")
 
-                    // Update the parent queue to point to the new DLQ
-                    val updatedQueue = queue.copy(dlqId = savedDlq.queueId)
-                    queueRepository.save(updatedQueue)
+        // Step 4: Calculate available space and move messages atomically
+        // Note: This accepts a potential race condition where concurrent threads might
+        // see stale currentMessageCount values, leading to minor DLQ overflow.
+        // This is intentional graceful degradation - exhausted messages that can't
+        // fit in DLQ remain in source queue and will be retried in next cycle.
+        val availableSpace = (dlq.queueSize - dlq.currentMessageCount).coerceAtLeast(0)
 
-                    savedDlq
-                } else {
-                    // Use existing DLQ
-                    val dlqId = queue.dlqId!!
-                    queueRepository.findById(dlqId).orElseThrow()
-                }
-
-            // Calculate how many messages can be moved to DLQ
-            val availableSpace = finalDlq.queueSize - finalDlq.currentMessageCount
-            val messagesToMove =
-                if (availableSpace > 0) {
-                    exhaustedMessages.take(availableSpace)
-                } else {
-                    emptyList()
-                }
-
-            if (messagesToMove.isNotEmpty()) {
-                // Move available messages to DLQ in batch
-                val dlqMessages =
-                    messagesToMove.map { exhaustedMessage ->
-                        Message(
-                            queueId = finalDlq.queueId,
-                            data = exhaustedMessage.data,
-                            deliveryCount = exhaustedMessage.deliveryCount,
-                            visibleAt = LocalDateTime.now(),
-                            createdAt = exhaustedMessage.createdAt,
-                        )
-                    }
-
-                // Save all DLQ messages at once
-                messageRepository.saveAll(dlqMessages)
-
-                // Delete only the messages that were moved to DLQ
-                messageRepository.deleteAll(messagesToMove)
-
-                // Update queue counts
-                queue.currentMessageCount -= messagesToMove.size
-                finalDlq.currentMessageCount += messagesToMove.size
-
-                queueRepository.save(queue)
-                queueRepository.save(finalDlq)
+        val movedCount =
+            if (availableSpace > 0) {
+                messageRepository.moveMessagesToDlqAtomic(
+                    sourceQueueId = queueIdAsUUID,
+                    dlqId = dlq.queueId,
+                    availableSpace = availableSpace,
+                    now = now,
+                )
+            } else {
+                0
             }
-            // Note: If DLQ is full or not enough space, remaining exhausted messages stay in source queue
-            // This should be monitored via metrics in a real implementation
-        }
 
-        // Step 3: Dequeue next available message
-        val message =
-            messageRepository.findAndLockNextAvailableMessage(
+        // Step 5: Record metrics for messages that couldn't be moved due to DLQ capacity limits
+        val failedToMove = totalExhausted - movedCount
+        if (failedToMove > 0) {
+            incrementCounter(DLQ_FAILED_METRIC, queueIdAsUUID.toString(), "capacity_exceeded", failedToMove.toDouble())
+        }
+    }
+
+    private fun dequeueSingleMessage(
+        queueIdAsUUID: UUID,
+        now: LocalDateTime,
+    ): DequeueMessageResponse {
+        // Single atomic operation: find, lock, and update message delivery
+        val updatedMessage =
+            messageRepository.findLockAndUpdateMessageAtomic(
                 queueId = queueIdAsUUID,
-                maxDeliveries = queue.maxDeliveries,
                 now = now,
             )
 
-        return if (message != null) {
-            // Update the message
-            val newVisibleAt = now.plusSeconds(queue.visibilityTimeout.toLong())
-            messageRepository.updateMessageDelivery(
-                messageId = message.messageId,
-                deliveryCount = message.deliveryCount + 1,
-                visibleAt = newVisibleAt,
-            )
-
-            incrementCounter(DEQUEUE_TOTAL_METRIC, queueId, "success")
+        return if (updatedMessage != null) {
+            incrementCounter(DEQUEUE_TOTAL_METRIC, queueIdAsUUID.toString(), "success")
 
             DequeueMessageResponse(
                 message =
                     MessageResponse(
-                        messageId = message.messageId,
-                        data = message.data,
-                        deliveryCount = message.deliveryCount + 1,
-                        invisibleUntil = newVisibleAt,
-                        createdAt = message.createdAt,
+                        messageId = updatedMessage.messageId,
+                        data = updatedMessage.data,
+                        deliveryCount = updatedMessage.deliveryCount,
+                        invisibleUntil = updatedMessage.visibleAt,
+                        createdAt = updatedMessage.createdAt,
                     ),
             )
         } else {
-            incrementCounter(DEQUEUE_TOTAL_METRIC, queueId, "empty")
-
+            incrementCounter(DEQUEUE_TOTAL_METRIC, queueIdAsUUID.toString(), "empty")
             DequeueMessageResponse(message = null)
         }
     }
