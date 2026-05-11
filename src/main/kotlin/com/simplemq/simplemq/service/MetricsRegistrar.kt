@@ -39,8 +39,12 @@ class MetricsRegistrar(
      * registered, the function returns without creating duplicates.
      *
      * @param queueId The UUID of the queue for which to register metrics.
+     * @param type Optional type tag (e.g., "queue", "dlq") to filter metrics by queue type.
      */
-    fun registerGaugesForQueue(queueId: UUID) {
+    fun registerGaugesForQueue(
+        queueId: UUID,
+        type: String = "queue",
+    ) {
         // Guard Clause: If we already have gauges for this ID, don't create more!
         if (registeredGauges.containsKey(queueId)) {
             return
@@ -62,6 +66,7 @@ class MetricsRegistrar(
                 }
                 .description("Current number of messages in the queue")
                 .tag("queue_id", queueId.toString())
+                .tag("type", type)
                 .register(meterRegistry)
         gauges.add(queueDepthGauge)
 
@@ -72,6 +77,7 @@ class MetricsRegistrar(
                 }
                 .description("Number of messages currently in flight")
                 .tag("queue_id", queueId.toString())
+                .tag("type", type)
                 .register(meterRegistry)
         gauges.add(inFlightCountGauge)
 
@@ -82,6 +88,7 @@ class MetricsRegistrar(
                 }
                 .description("Age of the oldest waiting message in seconds")
                 .tag("queue_id", queueId.toString())
+                .tag("type", type)
                 .register(meterRegistry)
         gauges.add(oldestWaitingMessageAgeGauge)
 
