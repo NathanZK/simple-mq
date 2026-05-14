@@ -183,22 +183,28 @@ interface MessageRepository : JpaRepository<Message, UUID> {
 
     @Query(
         value = """
-            WITH moved_rows AS (
+            WITH exhausted_candidates AS (
+                -- IDENTIFY: Previously 'countExhaustedMessages' logic
+                SELECT m.message_id, m.data, m.created_at
+                FROM messages m
+                JOIN queues q ON m.queue_id = q.queue_id
+                WHERE m.queue_id = CAST(:sourceQueueId AS uuid) 
+                  AND m.delivery_count >= q.max_deliveries
+                  AND m.visible_at <= CAST(:now AS timestamp)
+            ),
+            moved_rows AS (
+                -- DELETE: The actual move logic limited by available space
                 DELETE FROM messages
                 WHERE message_id IN (
-                    SELECT m.message_id 
-                    FROM messages m
-                    JOIN queues q ON m.queue_id = q.queue_id
-                    WHERE m.queue_id = CAST(:sourceQueueId AS uuid) 
-                    AND m.delivery_count >= q.max_deliveries
-                    AND m.visible_at <= CAST(:now AS timestamp)
+                    SELECT message_id FROM exhausted_candidates
                     LIMIT :availableSpace
                 )
                 RETURNING *
             ),
             insert_step AS (
+                -- INSERT: Into the DLQ
                 INSERT INTO messages (message_id, queue_id, data, delivery_count, visible_at, created_at)
-                SELECT message_id, CAST(:dlqId AS uuid), data, delivery_count, CAST(:now AS timestamp), created_at
+                SELECT message_id, CAST(:dlqId AS uuid), data, 0, CAST(:now AS timestamp), created_at
                 FROM moved_rows
             ),
             update_source AS (
@@ -209,14 +215,17 @@ interface MessageRepository : JpaRepository<Message, UUID> {
                 UPDATE queues SET current_message_count = current_message_count + (SELECT COUNT(*) FROM moved_rows)
                 WHERE queue_id = CAST(:dlqId AS uuid) AND EXISTS (SELECT 1 FROM moved_rows)
             )
-            SELECT COUNT(*) FROM moved_rows
+            -- RETURN: Chained metrics [total_found, actually_moved]
+            SELECT 
+                (SELECT COUNT(*) FROM exhausted_candidates) as total_exhausted,
+                (SELECT COUNT(*) FROM moved_rows) as moved_count
         """,
-        nativeQuery = true,
+        nativeQuery = true
     )
     fun moveMessagesToDlqAtomic(
         @Param("sourceQueueId") sourceQueueId: UUID,
         @Param("dlqId") dlqId: UUID,
         @Param("availableSpace") availableSpace: Int,
         @Param("now") now: LocalDateTime,
-    ): Int
+    ): List<Array<Any>>
 }
