@@ -5,6 +5,8 @@
 [![Bugs](https://sonarcloud.io/api/project_badges/measure?project=NathanZK_simple-mq&metric=bugs)](https://sonarcloud.io/project/overview?id=NathanZK_simple-mq)
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=NathanZK_simple-mq&metric=security_rating)](https://sonarcloud.io/project/overview?id=NathanZK_simple-mq)
 
+**Live:** http://34.61.136.245.nip.io:8080/actuator/health &nbsp;|&nbsp; **Dashboard:** [Grafana](https://nathanzk.grafana.net/public-dashboards/61234e232e854734bd240e7a5b0cb00b)
+
 A production-grade message queue service inspired by Amazon SQS. The application is intentionally simple — the focus is infrastructure, operations, and architecture decisions made explicitly.
 
 ---
